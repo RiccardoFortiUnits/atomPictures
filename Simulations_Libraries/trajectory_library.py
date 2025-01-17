@@ -5,6 +5,8 @@
 
 # This library has the functions for simulating the trajectories of atoms
 
+from __future__ import annotations
+from typing import List
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -20,7 +22,7 @@ import sys
 sys.path.insert(0, '//ARQUS-NAS/ArQuS Shared/Simulations/MOT capture simulation/Simulations_11_2024/')
 
 import Simulations_Libraries.general_library as genlib
-
+import Simulations_Libraries.Yb_library as yblib
 
 # Universal Constants
 c = const.physical_constants["speed of light in vacuum"][0]
@@ -50,6 +52,15 @@ TOTAL_LENGTH = 37*10**-2 # Length of the system bewteen end of AoSense and cente
 
 
 class Atom:
+    c = const.physical_constants["speed of light in vacuum"][0]
+    h = const.physical_constants["Planck constant"] [0]
+    hbar = h/(2*np.pi)
+    kB = const.physical_constants["Boltzmann constant"][0]
+    muB = 1.399*10 ** 6;                # Bohr's magneton [Hz/G]
+
+    nm = 10**-9
+    MHz = 10**6
+    kHz = 10**3
     def __init__(self, x,y,z,vx,vy,vz):
         self.X = x
         self.Y = y
@@ -57,8 +68,147 @@ class Atom:
         self.vx = vx
         self.vy = vy
         self.vz = vz
-        
+        self.transitions : List[yblib.Transition] = []
+        self.m = 1.66e-24
+    @property
+    def position(self):
+        return (self.X, self.Y, self.Z)
+    @position.setter
+    def position(self, value):
+        (self.X, self.Y, self.Z) = (value[0], value[1], value[2])
+    @property
+    def velocity(self):
+        return (self.vx, self.vy, self.vz)
+    @velocity.setter
+    def velocity(self, value):
+        (self.vx, self.vy, self.vz) = (value[0], value[1], value[2])
 
+class Ytterbium(Atom):
+
+    # Initialise ytterbium atoms 
+    Yb_171 = yblib.Yb(171,170.936323,1/2)
+    Yb_173 = yblib.Yb(173,172.938208,5/2)
+    Yb_174 = yblib.Yb(173,173.938859,0)
+
+    def __init__(self, x,y,z,vx,vy,vz, isotope = 174):
+        super().__init__(x, y, z, vx, vy, vz)
+        Isotope = [self.Yb_171, None, self.Yb_173, self.Yb_174][isotope - 171]
+        # State(Isotope, name, S, L, J)
+        _1S0 = yblib.State(Isotope,"1S0",0,0,0)
+        _1P1 = yblib.State(Isotope,"1P1",0,0,1)
+        _3P1 = yblib.State(Isotope,"3P1",1,1,1)
+
+        ## GS (1S0) Transitions (g.s., e.s., lambda (m), 2pi Gamma (s^-1), *I_sat (mW/cm^2)):
+        GS_Transitions = []
+        GS_Transitions.append(yblib.Transition(_1S0,_1P1,398.911*nm,183.02*MHz,59.97)) # values of lambda and gamma from Riegger Table B.1
+        GS_Transitions.append(yblib.Transition(_1S0,_3P1,555.802*nm,1.15*MHz,0.139))
+        self.transitions = GS_Transitions
+        self.m = Isotope.m
+
+class Beam:
+    def __init__(self, angle, x0, function):
+        if isinstance(angle,list) or isinstance(angle, tuple):
+            self.angleXY = angle[0]
+            self.angleXZ = angle[1]
+            self.angleYZ = angle[2]
+        else:
+            self.angleXY = angle
+            self.angleXZ = 0
+            self.angleYZ = 0
+        if isinstance(x0, list) or isinstance(x0, tuple):
+            self.x0 = x0[0]
+            self.y0 = x0[1]
+            self.z0 = x0[2]
+        else:
+            self.x0 = x0
+            self.y0 = 0
+            self.z0 = 0
+        self._originalFuntion = function
+        self.function = lambda coordinate_tuple : function(CoordinateChange_extended(coordinate_tuple,self.x0, self.y0, self.z0, self.angleXY, self.angleXZ, self.angleYZ))
+    @property
+    def angle(self):
+        return (self.angleXY, self.angleXZ, self.angleYZ)
+    @property
+    def center(self):
+        return (self.x0, self.y0, self.z0)
+    def __call__(self, x,y = None,z = None):
+        if y == None and z == None:
+            return self.function(x)
+        return self.function((x,y,z))
+    def __add__(self, other: Beam):
+        if type(other) == Beam:
+            #if a Beam is combined with another, it should not have an intrinsic direction
+            return Beam(0,0, lambda coordinate_tuple : self(coordinate_tuple)+other(coordinate_tuple))
+        if isinstance(other, (int, float, np.number)):
+            #let's give the new beam the same direction as the original one
+            return Beam(self.angle, self.center, lambda coordinate_tuple : self._originalFuntion(coordinate_tuple)+other)
+        raise ValueError('Sum not defined for Beam and '+str(type(other)))
+    def __sub__(self, other):
+        if type(other) == Beam:
+            return Beam(0,0, lambda coordinate_tuple : self(coordinate_tuple)-other(coordinate_tuple))
+        if isinstance(other, (int, float, np.number)):
+            return Beam(self.angle, self.center, lambda coordinate_tuple : self._originalFuntion(coordinate_tuple)-other)
+        raise ValueError('Subtraction not defined for Beam and '+str(type(other)))
+    def __mul__(self, other):
+        if type(other) == Beam:
+            return Beam(0,0, lambda coordinate_tuple : self(coordinate_tuple)*other(coordinate_tuple))
+        if isinstance(other, (int, float, np.number)):
+            return Beam(self.angle, self.center, lambda coordinate_tuple : self._originalFuntion(coordinate_tuple)*other)
+        raise ValueError('Multiplication not defined for Beam and '+str(type(other)))
+    def __truediv__(self, other):
+        if type(other) == Beam:
+            return Beam(0,0, lambda coordinate_tuple : self(coordinate_tuple)/other(coordinate_tuple))
+        if isinstance(other, (int, float, np.number)):
+            return Beam(self.angle, self.center, lambda coordinate_tuple : self._originalFuntion(coordinate_tuple)/other)
+        raise ValueError('Division not defined for Beam and '+str(type(other)))
+    def __div__(self, other):
+        return self.__truediv__(other)
+    
+    def withExtraFunction(self, extra_function):
+        return Beam(self.angle, self.center, lambda coordinate_tuple : extra_function(self._originalFuntion(coordinate_tuple)))
+    
+    @property
+    def direction(self):
+        #warning: this function gives the direction of the beam, if its intensity function represents 
+            #a beam travelling on the x axis. If this beam is the combination of more Beam objects, it
+            #should not have an intrinsic direction, and this function will return (1,0,0)
+        return np.array(CoordinateChange_extended((self.x0+1, self.y0, self.z0),self.x0, self.y0, self.z0, self.angleXY, self.angleXZ, self.angleYZ))
+
+    
+    def plotSection(self, planeCenter, planeRotation, y_range, z_range, resolution = 100):
+        planeCenter = np.array(planeCenter)
+        planeRotation = np.array(planeRotation)
+        f = lambda y, z : self(reverseCoordinateChange((0,y,z), 
+                                                       planeCenter[0], planeCenter[1], planeCenter[2], 
+                                                       planeRotation[0], planeRotation[1], planeRotation[2]))
+        plot_2d_function(f, y_range, z_range, resolution)
+class Laser(Beam):
+    def __init__(self, angle, x0, wavelength, Intensity, w0, function = None, refractive_index = 1):
+        self.wavelength = wavelength
+        self.intensity = Intensity
+        if not isinstance(w0, (list, tuple)):
+            w0 = (w0,w0)
+        self.w0 = w0
+        self.refractive_index = refractive_index
+        if function is None:
+            function = lambda coordinate_tuple : GaussianBeam(coordinate_tuple, wavelength, w0[0], w0[1], Intensity)
+        elif not callable(function):
+            raise ValueError(f'The function must be callable, got {type(function)} instead')
+        
+        super().__init__(angle, x0, function)
+    def electricalField(self) -> Laser:
+        #use this function to obtain the electrical field of this beam. It will still be of class Laser, but the intensity will be proportional to the electrical field instead of the laser intensity
+        return self.withExtraFunction(genlib.I2E_0)
+    @property
+    def k(self):
+        return 2*np.pi/self.wavelength * self.direction
+    
+    def withExtraFunction(self, extra_function):
+        return Laser(self.angle, self.center, self.wavelength, self.intensity, self.w0, 
+                     lambda coordinate_tuple : extra_function(self._originalFuntion(coordinate_tuple)))
+    
+
+    
 ########################################
 ##### Generation of initial atomic sample ######
 ########################################
@@ -650,10 +800,80 @@ def GaussianBeam (data_tuple,wavelength,w0z,w0y,P0):
 @nu.jit()
 def CoordinateChange(data_tuple,angle,x0):
     (x,y,z) = data_tuple
-    x_Prime = (x-x0)/np.cos(angle) + y*np.sin(angle) - (x-x0)*np.tan(angle)*np.sin(angle)
+    x_Prime = (x - x0) * np.cos(angle) + y * np.sin(angle)
+    # x_Prime = (x-x0)/np.cos(angle) + y*np.sin(angle) - (x-x0)*np.tan(angle)*np.sin(angle)
     y_Prime = y*np.cos(angle) - (x-x0)*np.sin(angle)
     z_Prime = z
     return x_Prime,y_Prime,z_Prime
+def CoordinateChange_extended(data_tuple, x0, y0, z0, angleXY, angleXZ, angleYZ):
+    (x, y, z) = data_tuple
+    x, y, z = x - x0, y - y0, z - z0
+    
+    # Rotation around the XY plane
+    y_Prime = y * np.cos(angleXY) + x * np.sin(angleXY)
+    x_temp = x * np.cos(angleXY) - y * np.sin(angleXY)
+    
+    # Rotation around the XZ plane
+    x_Prime = x_temp * np.cos(angleXZ) - z * np.sin(angleXZ)
+    z_temp = x_temp * np.sin(angleXZ) + z * np.cos(angleXZ)
+    
+    
+    # Rotation around the YZ plane
+    z_Prime = y_Prime * np.sin(angleYZ) + z_temp * np.cos(angleYZ)
+    y_Prime = y_Prime * np.cos(angleYZ) - z_temp * np.sin(angleYZ)
+    
+    return x_Prime, y_Prime, z_Prime
+def reverseCoordinateChange(data_tuple, x0, y0, z0, angleXY, angleXZ, angleYZ):
+    #reverts the coordinate change done by CoordinateChange_extended
+    (x, y, z) = data_tuple
+    angleXY = - angleXY
+    angleXZ = - angleXZ
+    angleYZ = - angleYZ
+ 
+    # Rotation around the YZ plane
+    z_temp = y * np.sin(angleYZ) + z * np.cos(angleYZ)
+    y_temp = y * np.cos(angleYZ) - z * np.sin(angleYZ)
+
+    # Rotation around the XZ plane
+    x_temp = x * np.cos(angleXZ) - z_temp * np.sin(angleXZ)
+    z_Prime = x * np.sin(angleXZ) + z_temp * np.cos(angleXZ)
+
+    # Rotation around the XY plane
+    y_Prime = x_temp * np.sin(angleXY) + y_temp * np.cos(angleXY)
+    x_Prime = x_temp * np.cos(angleXY) - y_temp * np.sin(angleXY)
+
+    return x_Prime + x0, y_Prime + y0, z_Prime + z0
+
+def plotVector(ax, vector_coordinates, startingPoint_coordinates = (0,0,0)):
+    ax.quiver(startingPoint_coordinates[0], startingPoint_coordinates[1], startingPoint_coordinates[2],
+              vector_coordinates[0], vector_coordinates[1], vector_coordinates[2],
+              arrow_length_ratio=0.1)
+    
+def plot_2d_function(f, x_range, y_range, resolution=100):
+    """
+    Plots a 2D image where each pixel has the intensity of a certain function f(x, y).
+    
+    Parameters:
+    f (function): The function to plot. It should take two arguments (x, y) and return a single value.
+    x_range (tuple): The range of x values as (x_min, x_max).
+    y_range (tuple): The range of y values as (y_min, y_max).
+    resolution (int): The resolution of the plot (number of pixels along each axis).
+    """
+    x = np.linspace(x_range[0], x_range[1], resolution)
+    y = np.linspace(y_range[0], y_range[1], resolution)
+    X, Y = np.meshgrid(x, y)
+    Z = np.vectorize(f)(X, Y)
+    
+    plt.figure(figsize=(6, 6))  # Ensure the plot is always square
+    plt.imshow(Z, extent=(x_range[0], x_range[1], y_range[0], y_range[1]), origin='lower', cmap='viridis', aspect='auto')
+    plt.xlim(x_range)
+    plt.ylim(y_range)
+    plt.colorbar(label='Intensity')
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.title('2D Function Plot')
+    plt.show()
+
 
 # @nu.jit()
 def ScatteringRate_2Level_Doppler3D_Bfield(transition, wavelength, E_0,k, v, ZeemanShift): 
@@ -728,31 +948,13 @@ def Space_grid(Ngrid, cell_center = 37*10**-2, y_lim = 15, z_lim = 8, start = 33
     z = np.linspace(-z_lim,z_lim,Ngrid)*10**-3
     return x, y, z
 # @nu.jit()
-def AntiHelmhotz(data_tuple,I,x,y,z,R = 5*10**-2, spyres = 40, Total_Length = 37*10**-2,PlotB = False):
+def AntiHelmhotz(data_tuple,I,R = 5*10**-2, spyres = 40):
     (x_grid,y_grid,z_grid) = data_tuple
     coeff = -3*mu_0*I*R**2*(R/2)/(2*(R**2+(R/2)**2)**(5/2))*spyres
     x_comp = coeff*x_grid/2 
     y_comp = coeff*y_grid/2 
     z_comp = - coeff*z_grid
     B_field = np.sqrt(x_comp**2+y_comp**2+z_comp**2)  
-    if PlotB: 
-        grad_y = np.round(B_field[genlib.Find_Target(Total_Length,x),genlib.Find_Target(10**-2,y),genlib.Find_Target(0,z)]-B_field[genlib.Find_Target(Total_Length,x),genlib.Find_Target(0,y),genlib.Find_Target(0,z)],2)  
-        grad_z = np.round(B_field[genlib.Find_Target(Total_Length,x),genlib.Find_Target(0,y),genlib.Find_Target(10**-2,z)]-B_field[genlib.Find_Target(Total_Length,x),genlib.Find_Target(0,y),genlib.Find_Target(0,z)],2)   
-        print('dB/dz: ',np.round(grad_z,2),'G/cm')
-        print('dB/dy: ',np.round(grad_y,2),'G/cm')
-        print(f'Minimum B: {np.round(np.min(B_field),4)} G')
-        Nplot = 200
-        figure, axes = plt.subplots(1,3,figsize = (25,5))
-        axes[0].plot(x*10**3, B_field[:,int(Nplot/2),int(Nplot/2)],color='tab:orange')
-        axes[0].set_xlabel('x (mm)')
-        axes[0].set_ylabel('B (G)')
-        axes[1].plot(y*10**3, B_field[genlib.Find_Target(Total_Length,x),:,genlib.Find_Target(0,z)],color='tab:orange')
-        axes[1].set_xlabel('y (mm)')
-        axes[1].set_ylabel('B (G)')
-        axes[2].plot(z*10**3, B_field[genlib.Find_Target(Total_Length,x),genlib.Find_Target(0,y),:],color='tab:orange')
-        axes[2].set_xlabel('z (mm)')
-        axes[2].set_ylabel('B (G)')
-        plt.show()
     return B_field
 
 
@@ -769,3 +971,121 @@ def CrossedBeams (data_tuple, theta, d, diameters, Power):
     CBeam1 = GaussianBeam((x_new, y_new, z_new),399*10**-9,CB_x_diam/2,CB_y_diam/2,Power)
     CBeam2 = GaussianBeam((x_new2, y_new2, z_new2),399*10**-9,CB_x_diam/2,CB_y_diam/2,Power)
     return CBeam1, CBeam2
+
+
+class experiment:
+    def __init__(self):
+        self.atoms : List[Atom]= []
+        self.lasers : List[Laser] = []
+    
+    def add_atom(self, atom : Atom):
+        self.atoms.append(atom)
+    def add_laser(self, laser : Laser):
+        self.lasers.append(laser)
+    
+    def run(self, time = 1e-6, stepTime = 1e-9):
+        ZeemanShift = 0#for now, let's not use this
+        times = np.arange(0, time, stepTime)
+        positions = np.zeros((len(times), len(self.atoms), 3))
+        hits = np.empty((len(times), len(self.atoms), len(self.lasers)), dtype=object)
+        probabilityList = np.zeros(len(self.lasers))
+        electricalFields = [laser.electricalField() for laser in self.lasers]
+        for t_idx, tau in enumerate(times):#it would be nice to advance in time with different dt, depending on if the atom was excited or not, but then you would have different times for each atom
+            for a_idx, A in enumerate(self.atoms):
+                positions[t_idx, a_idx, :] = A.position
+                Dv = np.zeros(3)
+                for i, laser in enumerate(electricalFields):
+                    probabilityList[i] = stepTime * ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[1],laser.wavelength,laser(A.X, A.Y, A.Z),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
+                rand = np.random.random(len(self.lasers))
+                chosenLasers = [i for i in range(len(self.lasers)) if rand[i] < probabilityList[i]]
+                if len(chosenLasers) > 0:
+                    i = np.random.choice(chosenLasers)
+                    generatedPhotonKick = SpontaneousEmission(A.transitions[1].Lambda,A.m)
+                    Dv += hbar*self.lasers[i].k/A.m+generatedPhotonKick
+                    hits[t_idx, a_idx, i] = - generatedPhotonKick / np.linalg.norm(generatedPhotonKick)
+                OneStep(A, Dv, stepTime)
+        self.lastPositons = positions
+        is_NotNone = np.vectorize(lambda x: x is not None)
+        self.lastHits = np.where(is_NotNone(hits))
+        self.lastGeneratedPhotons = hits[self.lastHits]
+        return positions
+    
+    def plotTrajectories(self):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        for atom_idx in range(len(self.atoms)):
+            ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
+            ax.scatter(self.lastPositons[0, atom_idx, 0], self.lastPositons[0, atom_idx, 1], self.lastPositons[0, atom_idx, 2])
+        for laser_idx in range(len(self.lasers)):
+            laserHits = np.where(self.lastHits[2] == laser_idx)
+            if len(laserHits) > 0:
+                time_idx = self.lastHits[0][laserHits]
+                atom_idx = self.lastHits[1][laserHits]
+                ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
+                           label=f'laser {laser_idx+1} hits', s=7)
+                
+        ax.set_xlabel('X Position (m)')
+        ax.set_ylabel('Y Position (m)')
+        ax.set_zlabel('Z Position (m)')
+        ax.set_title('3D Trajectories of Atoms')
+        ax.legend()
+        plt.show()
+
+class Camera:
+    def __init__(self, position, orientation, y_range, z_range, f_orientationIsCorrect, resolution = 100):
+        self.position = np.array(position)
+        self.resolution = np.array(resolution)
+        self.y_range = y_range
+        self.z_range = z_range
+        self.orientation = orientation
+        self.f_orientationIsCorrect = f_orientationIsCorrect
+    
+    @staticmethod
+    def intersect_yz_plane(start_points, direction_vectors):
+        x0, y0, z0 = start_points.T
+        dx, dy, dz = direction_vectors.T
+                
+        # Calculate the parameter t for the intersection with the YZ plane (x = 0)        
+        t = -x0 / dx #it shouldn't happen that dx==0, because we should only have the photons that are oriented towards the camera
+
+        # Calculate the intersection points
+        y = y0 + t * dy
+        z = z0 + t * dz
+        
+        # Combine the results into an array of intersection points
+        return np.vstack((np.zeros_like(y), y, z)).T
+
+
+    def takePicture(self, photonStartPoints, photonDirections, plot = False):
+        #rotate all the points and directions to the camera's reference frame
+        photonStartPoints = np.array([CoordinateChange_extended(point, *self.position, *self.orientation) for point in photonStartPoints])
+        photonDirections = np.array([CoordinateChange_extended(direction, 0,0,0, *self.orientation) for direction in photonDirections])
+        #let's see which photons have the correct orientation to hit the camera
+        correctOriented = np.where(self.f_orientationIsCorrect(photonDirections))
+        #let's see which photons hit the camera
+        hittingPositions = self.intersect_yz_plane(photonStartPoints[correctOriented], photonDirections[correctOriented])
+        actuallyHitting = np.where((self.y_range[0] <= hittingPositions[:, 1]) & (hittingPositions[:, 1] <= self.y_range[1]) & (self.z_range[0] <= hittingPositions[:, 2]) & (hittingPositions[:, 2] <= self.z_range[1]))
+
+        #let's fill the pixels
+        # x = np.linspace(self.y_range[0], self.y_range[1], self.resolution)
+        # y = np.linspace(self.z_range[0], self.z_range[1], self.resolution)
+        # X, Y = np.meshgrid(x, y)
+        normalizedHits = (hittingPositions[actuallyHitting][:,1:]).T
+        normalizedHits[0] = np.floor((normalizedHits[0] - self.y_range[0]) / (self.y_range[1] - self.y_range[0]) * self.resolution)
+        normalizedHits[1] = np.floor((normalizedHits[1] - self.z_range[0]) / (self.z_range[1] - self.z_range[0]) * self.resolution)
+        normalizedHits = normalizedHits.astype(int)
+        image = np.zeros((self.resolution, self.resolution))
+        for hit in normalizedHits.T:
+            image[hit[0]][hit[1]] += 1
+        if plot:
+            plt.figure(figsize=(6, 6))  # Ensure the plot is always square
+            plt.imshow(image, extent=(self.y_range[0], self.y_range[1], self.z_range[0], self.z_range[1]), origin='lower', cmap='viridis', aspect='auto')
+            plt.xlim(self.y_range)
+            plt.ylim(self.z_range)
+            plt.colorbar(label='Intensity')
+            plt.xlabel('x')
+            plt.ylabel('y')
+            plt.title('2D Function Plot')
+            plt.show()
+        return image
+

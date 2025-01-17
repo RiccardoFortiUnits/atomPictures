@@ -105,30 +105,30 @@ print(f'V saturation: {s_VER}')
 # MOT capture range:
 x, y, z = trajlib.Space_grid(Ngrid = 200, cell_center = 370e-3, y_lim = 15, z_lim = 8, start = 355e-3)
 x_grid, y_grid, z_grid = np.meshgrid(x,y,z,indexing = 'ij')
-B = lambda x_grid, y_grid, z_grid : trajlib.AntiHelmhotz(trajlib.CoordinateChange((x_grid, y_grid, z_grid),3*np.pi/4,Total_Length),I_coils,x,y,z,PlotB=False)
+B = trajlib.Beam(3*np.pi/4,Total_Length, lambda coordinates : trajlib.AntiHelmhotz(coordinates,I_coils))
 # B = trajlib.AntiHelmhotz(trajlib.CoordinateChange((x_grid, y_grid, z_grid),3*np.pi/4,Total_Length),I_coils,x,y,z,PlotB=False)
 grad_z = 2*B(Total_Length,0,5e-3)
 print(f'Magnetic fiedl gradient: {np.round(grad_z,2)} G/cm')
 ## Plot B
-if show_B:
-    figure, axes = plt.subplots(1,3,figsize = (25,5))
-    axes[0].plot(x*10**3, B(list(range(len(x_grid))),0,0),color='tab:orange')
-    axes[0].set_xlabel('x (mm)')
-    axes[0].set_xlim(365,375)
-    axes[0].set_ylim(0,2.25)
+# if show_B:
+#     figure, axes = plt.subplots(1,3,figsize = (25,5))
+#     axes[0].plot(x*10**3, B(list(range(len(x_grid))),0,0),color='tab:orange')
+#     axes[0].set_xlabel('x (mm)')
+#     axes[0].set_xlim(365,375)
+#     axes[0].set_ylim(0,2.25)
 
-    axes[0].set_ylabel('B (G)')
-    axes[1].plot(y*10**3, B(Total_Length,list(range(len(y_grid))),0),color='tab:orange')
-    axes[1].set_xlabel('y (mm)')
-    axes[1].set_ylabel('B (G)')
-    axes[1].set_xlim(-5,5)
-    axes[1].set_ylim(0,2.25)
-    axes[2].plot(z*10**3, B(Total_Length,0,list(range(len(z_grid)))),color='tab:orange')
-    axes[2].set_xlabel('z (mm)')
-    axes[2].set_ylabel('B (G)')
-    axes[2].set_xlim(-5,5)
-    axes[2].set_ylim(0,5)
-    plt.show()
+#     axes[0].set_ylabel('B (G)')
+#     axes[1].plot(y*10**3, B(Total_Length,list(range(len(y_grid))),0),color='tab:orange')
+#     axes[1].set_xlabel('y (mm)')
+#     axes[1].set_ylabel('B (G)')
+#     axes[1].set_xlim(-5,5)
+#     axes[1].set_ylim(0,2.25)
+#     axes[2].plot(z*10**3, B(Total_Length,0,list(range(len(z_grid)))),color='tab:orange')
+#     axes[2].set_xlabel('z (mm)')
+#     axes[2].set_ylabel('B (G)')
+#     axes[2].set_xlim(-5,5)
+#     axes[2].set_ylim(0,5)
+#     plt.show()
 
 
 rc = -hbar*2*np.pi*detuning_G_HOR/(gJ_1S0_3P1*muB*hbar*2*np.pi*10*100)
@@ -136,38 +136,40 @@ vc = np.sqrt(2*rc*hbar*2*np.pi/GS_Transitions[1].Lambda*GS_Transitions[1].Gamma/
 print('Capture range: {} mm'.format(np.round(rc*10**3,3)))
 print('Capture velocity: {} m/s'.format(np.round(vc,2)))
 
-x1, y1, z1 = trajlib.CoordinateChange((x_grid, y_grid, z_grid),np.pi/4,Total_Length)
-G_MOT_Beam1 = trajlib.GaussianBeam((x1,y1,z1),556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P1_G)
+# x1, y1, z1 = trajlib.CoordinateChange((x_grid, y_grid, z_grid),np.pi/4,Total_Length)
+# G_MOT_Beam1 = trajlib.GaussianBeam((x1,y1,z1),556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P1_G)
+G_MOT_Beam1 = trajlib.Beam(np.pi/4,Total_Length, lambda coordinates : trajlib.GaussianBeam(coordinates,556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P1_G))
+# x1, y1, z1 = trajlib.CoordinateChange((x_grid, y_grid, z_grid),-np.pi/4,Total_Length)
+# G_MOT_Beam2 = trajlib.GaussianBeam((x1,y1,z1),556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P2_G)
+G_MOT_Beam2 = trajlib.Beam(-np.pi/4,Total_Length, lambda coordinates : trajlib.GaussianBeam(coordinates,556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P2_G))
 
-x1, y1, z1 = trajlib.CoordinateChange((x_grid, y_grid, z_grid),-np.pi/4,Total_Length)
-G_MOT_Beam2 = trajlib.GaussianBeam((x1,y1,z1),556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P2_G)
-
-G_MOT_Beam3 = trajlib.GaussianBeam(trajlib.CoordinateChange((z_grid,x_grid-Total_Length, y_grid),0,0),556*10**-9,MOT_VerSize/2,MOT_VerSize/2,P3_G)
+# G_MOT_Beam3 = trajlib.GaussianBeam(trajlib.CoordinateChange((z_grid,x_grid-Total_Length, y_grid),0,0),556*10**-9,MOT_VerSize/2,MOT_VerSize/2,P3_G)
+G_MOT_Beam3 = trajlib.Beam((-np.pi/2, 0, -np.pi/2),Total_Length, lambda coordinates : trajlib.GaussianBeam(coordinates,556*10**-9,MOT_VerSize/2,MOT_VerSize/2,P3_G))
 G_MOT = G_MOT_Beam1+G_MOT_Beam2+G_MOT_Beam3 
-E01_G = genlib.I2E_0(G_MOT_Beam1)
-E02_G = genlib.I2E_0(G_MOT_Beam2)
-E03_G = genlib.I2E_0(G_MOT_Beam3)
-E03_G_down = genlib.I2E_0(G_MOT_Beam3*percent)
+E01_G = G_MOT_Beam1.withExtraFunction(genlib.I2E_0)
+E02_G = G_MOT_Beam2.withExtraFunction(genlib.I2E_0)
+E03_G = G_MOT_Beam3.withExtraFunction(genlib.I2E_0)
+E03_G_down = (G_MOT_Beam3*percent).withExtraFunction(genlib.I2E_0)
 print(f'{percent*100}% down beam' )
 
 
-s1 = G_MOT_Beam1/GS_Transitions[1].Is/(1+G_MOT_Beam1/GS_Transitions[1].Is)
-s2 = G_MOT_Beam2/GS_Transitions[1].Is/(1+G_MOT_Beam2/GS_Transitions[1].Is)
-s3 = G_MOT_Beam3/GS_Transitions[1].Is/(1+G_MOT_Beam3/GS_Transitions[1].Is)
+s1 = G_MOT_Beam1/GS_Transitions[1].Is[0]/(G_MOT_Beam1/GS_Transitions[1].Is[0] + 1)
+s2 = G_MOT_Beam2/GS_Transitions[1].Is[0]/(G_MOT_Beam2/GS_Transitions[1].Is[0] + 1)
+s3 = G_MOT_Beam3/GS_Transitions[1].Is[0]/(G_MOT_Beam3/GS_Transitions[1].Is[0] + 1)
 s_all_MOT = s1+s2+s3
-s_MOT_topview = np.transpose(s_all_MOT[:,:,genlib.Find_Target(0,z)])
-s_MOT_sideview = np.transpose(s_all_MOT[:,genlib.Find_Target(0,y),:])
-if show_beams: 
-    plt.plot(Total_Length*10**3+20*np.cos(np.linspace(0,2*np.pi,100)),20*np.sin(np.linspace(0,2*np.pi,100)),color='white',linestyle = '--')
-    plt.imshow(s_MOT_topview/3,cmap='viridis', extent = (np.amin(x)*10**3,np.amax(x)*10**3,np.amin(y)*10**3,np.amax(y)*10**3)) 
-    plt.colorbar()
-    plt.show()
+# s_MOT_topview = np.transpose(s_all_MOT[:,:,genlib.Find_Target(0,z)])
+# s_MOT_sideview = np.transpose(s_all_MOT[:,genlib.Find_Target(0,y),:])
+# if show_beams: 
+#     plt.plot(Total_Length*10**3+20*np.cos(np.linspace(0,2*np.pi,100)),20*np.sin(np.linspace(0,2*np.pi,100)),color='white',linestyle = '--')
+#     plt.imshow(s_MOT_topview/3,cmap='viridis', extent = (np.amin(x)*10**3,np.amax(x)*10**3,np.amin(y)*10**3,np.amax(y)*10**3)) 
+#     plt.colorbar()
+#     plt.show()
 
 
 HOR_powers = np.flip(np.array([2.5])*1e-3)
 # HOR_powers = np.flip(np.array([2.5,5,10,20,30])*1e-3)
 print(HOR_powers)
-SaveOnFile = True
+SaveOnFile = False
 Show = False
 Considered = 1
 
@@ -176,7 +178,7 @@ Deterministic = True
 deterministic_v = 0
 deterministic_x = 370
 
-t_end = 20*10**-3  # simulation duration
+t_end = 2*10**-3  # simulation duration
 # t_end = 200*10**-3  # simulation duration
 tau_excited = 1/GS_Transitions[1].Gamma # lifetime of the excited state
 dt_no_scatter = tau_excited # simulation dt when the atom has not scattered a photon  
@@ -187,16 +189,19 @@ print(f'Number of simulation steps: {int(N_steps*1e-3)}k')
 
 def saveParam(name, value, unit):
     params[name] = value
-    if value is not None:
+    if unit is not None:
         params[name].attrs['units'] = unit
 for pow in HOR_powers:
     print(f'HOR MOT power = {pow*1e3} mW')
     P1_G = pow
     P2_G = pow
-    G_MOT_Beam1 = trajlib.GaussianBeam((x1,y1,z1),556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P1_G)
-    G_MOT_Beam2 = trajlib.GaussianBeam((x1,y1,z1),556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P2_G)
-    E01_G = genlib.I2E_0(G_MOT_Beam1)
-    E02_G = genlib.I2E_0(G_MOT_Beam2)
+    G_MOT_Beam1.function = lambda coordinates : trajlib.GaussianBeam(coordinates,556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P1_G)
+    G_MOT_Beam2.function = lambda coordinates : trajlib.GaussianBeam(coordinates,556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P2_G)
+    # this code makes beam 1 and beam 2 rotated on the same axis... I'm not sure about it
+    # G_MOT_Beam1 = trajlib.GaussianBeam((x1,y1,z1),556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P1_G)
+    # G_MOT_Beam2 = trajlib.GaussianBeam((x1,y1,z1),556*10**-9,MOT_HorSize/2,MOT_HorSize/2,P2_G)
+    # E01_G = genlib.I2E_0(G_MOT_Beam1)
+    # E02_G = genlib.I2E_0(G_MOT_Beam2)
     filename = f'/5BMOT_holding_HOR_power_{np.round(pow*1e3,1)}mW_VER_power{np.round(s_VER,1)}I_sat_{t_end*1e3}ms.h5'
     k1_G = np.array([k_mod_G_HOR*np.cos(3*np.pi/4),+k_mod_G_HOR*np.sin(3*np.pi/4),0]) # (x,y,z)
     k2_G = np.array([k_mod_G_HOR*np.cos(3*np.pi/4),-k_mod_G_HOR*np.sin(3*np.pi/4),0])
@@ -267,32 +272,28 @@ for pow in HOR_powers:
             Dv = np.zeros(3)
             v_traj.append([A.vx,A.vy,A.vz])
             x_traj.append([A.X,A.Y,A.Z])
-            pos_x = genlib.Find_Target(A.X,x)
-            pos_y = genlib.Find_Target(A.Y,y)
-            pos_z = genlib.Find_Target(A.Z,z)
 
             # Find the magnetic shift: consider that atoms scattering from opposite beams will see opposite magnetic shifts
             B_act = B(A.X, A.Y, A.Z)
         
             # Decide from which beam the atom tries to absorb a photon
-            newCoordinates = np.asarray(trajlib.CoordinateChange((x[pos_x],y[pos_y],z[pos_z]),3*np.pi/4,Total_Length))
+            newCoordinates = np.asarray(trajlib.CoordinateChange((A.X, A.Y, A.Z),3*np.pi/4,Total_Length))
             # First: compute P_sc for all beams
 
-            P_sc_MOT[0] = tau_excited*trajlib.ScatteringRate_2Level_Doppler3D_Bfield(GS_Transitions[1],G_lambd_HOR,E01_G[pos_x,pos_y,pos_z],k1_G,[A.vx,A.vy,A.vz],np.sign(newCoordinates[0])*gJ_1S0_3P1*muB*B_act)
-            P_sc_MOT[1] = tau_excited*trajlib.ScatteringRate_2Level_Doppler3D_Bfield(GS_Transitions[1],G_lambd_HOR,E01_G[pos_x,pos_y,pos_z],-k1_G,[A.vx,A.vy,A.vz],-np.sign(newCoordinates[0])*gJ_1S0_3P1*muB*B_act)
+            P_sc_MOT[0] = tau_excited*trajlib.ScatteringRate_2Level_Doppler3D_Bfield(GS_Transitions[1],G_lambd_HOR,E01_G(A.X, A.Y, A.Z),k1_G,[A.vx,A.vy,A.vz],0)
+            P_sc_MOT[1] = tau_excited*trajlib.ScatteringRate_2Level_Doppler3D_Bfield(GS_Transitions[1],G_lambd_HOR,E01_G(A.X, A.Y, A.Z),-k1_G,[A.vx,A.vy,A.vz],-np.sign(newCoordinates[0])*gJ_1S0_3P1*muB*B_act)
             
-            P_sc_MOT[2] = tau_excited*trajlib.ScatteringRate_2Level_Doppler3D_Bfield(GS_Transitions[1],G_lambd_HOR,E02_G[pos_x,pos_y,pos_z],k2_G,[A.vx,A.vy,A.vz],np.sign(newCoordinates[1])*gJ_1S0_3P1*muB*B_act)
-            P_sc_MOT[3] = tau_excited*trajlib.ScatteringRate_2Level_Doppler3D_Bfield(GS_Transitions[1],G_lambd_HOR,E02_G[pos_x,pos_y,pos_z],-k2_G,[A.vx,A.vy,A.vz],-np.sign(newCoordinates[1])*gJ_1S0_3P1*muB*B_act)
+            P_sc_MOT[2] = tau_excited*trajlib.ScatteringRate_2Level_Doppler3D_Bfield(GS_Transitions[1],G_lambd_HOR,E02_G(A.X, A.Y, A.Z),k2_G,[A.vx,A.vy,A.vz],np.sign(newCoordinates[1])*gJ_1S0_3P1*muB*B_act)
+            P_sc_MOT[3] = tau_excited*trajlib.ScatteringRate_2Level_Doppler3D_Bfield(GS_Transitions[1],G_lambd_HOR,E02_G(A.X, A.Y, A.Z),-k2_G,[A.vx,A.vy,A.vz],-np.sign(newCoordinates[1])*gJ_1S0_3P1*muB*B_act)
             
-            P_sc_MOT[4] = tau_excited*trajlib.ScatteringRate_2Level_Doppler3D_Bfield(GS_Transitions[1],G_lambd_VER,E03_G[pos_x,pos_y,pos_z],k3_G,[A.vx,A.vy,A.vz],np.sign(newCoordinates[2])*gJ_1S0_3P1*muB*B_act)
+            P_sc_MOT[4] = tau_excited*trajlib.ScatteringRate_2Level_Doppler3D_Bfield(GS_Transitions[1],G_lambd_VER,E03_G(A.X, A.Y, A.Z),k3_G,[A.vx,A.vy,A.vz],np.sign(newCoordinates[2])*gJ_1S0_3P1*muB*B_act)
             #----------------------------------------------------------------------------
             # Decide from which beam you want to scatter from:
             # Roll a loaded die: divide the (0,1) interval into unequal intervals
             Psc_combined = P_sc_MOT
             P_sc_arr.append(P_sc_MOT)
-            Weight_tot = np.sum(Psc_combined)/np.mean(Psc_combined)
             beam_guess = np.random.uniform(0,1)
-            weights = Psc_combined/np.mean(Psc_combined)/Weight_tot   
+            weights = Psc_combined/np.sum(Psc_combined)
             if np.max(Psc_combined) < 10**-3:
                 NoScatter = True
                 which.append(0)
