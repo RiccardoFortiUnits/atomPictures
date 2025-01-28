@@ -23,6 +23,7 @@ sys.path.insert(0, '//ARQUS-NAS/ArQuS Shared/Simulations/MOT capture simulation/
 
 import Simulations_Libraries.general_library as genlib
 import Simulations_Libraries.Yb_library as yblib
+from scipy.interpolate import interp1d
 
 # Universal Constants
 c = const.physical_constants["speed of light in vacuum"][0]
@@ -124,48 +125,48 @@ class Beam:
             self.y0 = 0
             self.z0 = 0
         self._originalFuntion = function
-        self.function = lambda coordinate_tuple : function(CoordinateChange_extended(coordinate_tuple,self.x0, self.y0, self.z0, self.angleXY, self.angleXZ, self.angleYZ))
+        self.function = lambda coordinate_tuple, **kwargs : function(CoordinateChange_extended(coordinate_tuple,self.x0, self.y0, self.z0, self.angleXY, self.angleXZ, self.angleYZ), **kwargs)
     @property
     def angle(self):
         return (self.angleXY, self.angleXZ, self.angleYZ)
     @property
     def center(self):
         return (self.x0, self.y0, self.z0)
-    def __call__(self, x,y = None,z = None):
+    def __call__(self, x,y = None,z = None, **kwargs):
         if y == None and z == None:
-            return self.function(x)
-        return self.function((x,y,z))
+            return self.function(x, **kwargs)
+        return self.function((x,y,z), **kwargs)
     def __add__(self, other: Beam):
         if type(other) == Beam:
             #if a Beam is combined with another, it should not have an intrinsic direction
-            return Beam(0,0, lambda coordinate_tuple : self(coordinate_tuple)+other(coordinate_tuple))
+            return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)+other(coordinate_tuple, **kwargs))
         if isinstance(other, (int, float, np.number)):
             #let's give the new beam the same direction as the original one
-            return Beam(self.angle, self.center, lambda coordinate_tuple : self._originalFuntion(coordinate_tuple)+other)
+            return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)+other)
         raise ValueError('Sum not defined for Beam and '+str(type(other)))
     def __sub__(self, other):
         if type(other) == Beam:
-            return Beam(0,0, lambda coordinate_tuple : self(coordinate_tuple)-other(coordinate_tuple))
+            return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)-other(coordinate_tuple, **kwargs))
         if isinstance(other, (int, float, np.number)):
-            return Beam(self.angle, self.center, lambda coordinate_tuple : self._originalFuntion(coordinate_tuple)-other)
+            return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)-other)
         raise ValueError('Subtraction not defined for Beam and '+str(type(other)))
     def __mul__(self, other):
         if type(other) == Beam:
-            return Beam(0,0, lambda coordinate_tuple : self(coordinate_tuple)*other(coordinate_tuple))
+            return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)*other(coordinate_tuple, **kwargs))
         if isinstance(other, (int, float, np.number)):
-            return Beam(self.angle, self.center, lambda coordinate_tuple : self._originalFuntion(coordinate_tuple)*other)
+            return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)*other)
         raise ValueError('Multiplication not defined for Beam and '+str(type(other)))
     def __truediv__(self, other):
         if type(other) == Beam:
-            return Beam(0,0, lambda coordinate_tuple : self(coordinate_tuple)/other(coordinate_tuple))
+            return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)/other(coordinate_tuple, **kwargs))
         if isinstance(other, (int, float, np.number)):
-            return Beam(self.angle, self.center, lambda coordinate_tuple : self._originalFuntion(coordinate_tuple)/other)
+            return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)/other)
         raise ValueError('Division not defined for Beam and '+str(type(other)))
     def __div__(self, other):
         return self.__truediv__(other)
     
     def withExtraFunction(self, extra_function):
-        return Beam(self.angle, self.center, lambda coordinate_tuple : extra_function(self._originalFuntion(coordinate_tuple)))
+        return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: extra_function(self._originalFuntion(coordinate_tuple, **kwargs)))
     
     @property
     def direction(self):
@@ -183,7 +184,7 @@ class Beam:
                                                        planeRotation[0], planeRotation[1], planeRotation[2]))
         plot_2d_function(f, y_range, z_range, resolution)
 class Laser(Beam):
-    def __init__(self, angle, x0, wavelength, Intensity, w0, function = None, refractive_index = 1):
+    def __init__(self, angle, x0, wavelength, Intensity, w0, function = None, refractive_index = 1, switchingTimes = None):#switchingTimes = [dt, startTime, activeTime, inactiveTime]
         self.wavelength = wavelength
         self.intensity = Intensity
         if not isinstance(w0, (list, tuple)):
@@ -191,7 +192,27 @@ class Laser(Beam):
         self.w0 = w0
         self.refractive_index = refractive_index
         if function is None:
-            function = lambda coordinate_tuple : GaussianBeam(coordinate_tuple, wavelength, w0[0], w0[1], Intensity)
+            function = lambda coordinate_tuple, **kwargs: GaussianBeam(coordinate_tuple, wavelength, w0[0], w0[1], Intensity)
+        if switchingTimes is not None:
+            afterStartTime = switchingTimes[1] <= 0
+            time = -switchingTimes[1] if afterStartTime else 0
+            repetition = 0
+            def enableLaser(dt):
+                nonlocal time, afterStartTime, repetition
+                repetition += 1
+                time += dt
+                if not afterStartTime:
+                    if time >= switchingTimes[1]:
+                        afterStartTime = True
+                        time -= switchingTimes[1]
+                elif time > switchingTimes[2] + switchingTimes[3]:
+                    time -= switchingTimes[2] + switchingTimes[3]
+                if afterStartTime:
+                    if time >= switchingTimes[2]:
+                        return False
+                    return True
+                return False
+            function = lambda coordinate_tuple, dt = 0 : GaussianBeam(coordinate_tuple, wavelength, w0[0], w0[1], Intensity) if enableLaser(dt) else 0
         elif not callable(function):
             raise ValueError(f'The function must be callable, got {type(function)} instead')
         
@@ -205,7 +226,7 @@ class Laser(Beam):
     
     def withExtraFunction(self, extra_function):
         return Laser(self.angle, self.center, self.wavelength, self.intensity, self.w0, 
-                     lambda coordinate_tuple : extra_function(self._originalFuntion(coordinate_tuple)))
+                     lambda coordinate_tuple, **kwargs: extra_function(self._originalFuntion(coordinate_tuple, **kwargs)))
     
 
     
@@ -936,6 +957,32 @@ def SpontaneousEmission (wavelength,m):
     k[2] = kmod*np.cos(theta)
     return hbar*k/m
 
+inverse_cdf_interp = None
+def initializeSpontaneousEmission_qPolarization():
+    global inverse_cdf_interp
+    def cdf(x):
+        # return x/np.pi + (1 - np.cos(2*x))/(6*np.pi)
+        return x/np.pi + (np.cos(2*x) - 1)/(2*np.pi)
+
+    # Create a lookup table for the inverse CDF
+    x_values = np.linspace(0, np.pi, 1000)
+    cdf_values = cdf(x_values)
+    inverse_cdf_interp = interp1d(cdf_values, x_values, kind='cubic', fill_value="extrapolate")
+initializeSpontaneousEmission_qPolarization()
+def SpontaneousEmission_qPolarization (wavelength,m):
+    """
+    Emit a photon of given wavelength in a random direction
+    """
+    
+    kmod = 2*np.pi/(wavelength)
+    k = np.zeros(3)
+    theta = inverse_cdf_interp(np.random.uniform(0,1))
+    phi = np.random.uniform(0,2*np.pi)
+    k[0] = kmod*np.cos(phi)*np.sin(theta)
+    k[2] = kmod*np.sin(phi)*np.sin(theta)
+    k[1] = kmod*np.cos(theta)
+    return hbar*k/m
+
 def Space_grid(Ngrid, cell_center = 37*10**-2, y_lim = 15, z_lim = 8, start = 330e-3):
     '''
     Generate 3D grid for the simulation
@@ -1000,16 +1047,23 @@ class experiment:
                 chosenLasers = [i for i in range(len(self.lasers)) if rand[i] < probabilityList[i]]
                 if len(chosenLasers) > 0:
                     i = np.random.choice(chosenLasers)
-                    generatedPhotonKick = SpontaneousEmission(A.transitions[1].Lambda,A.m)
+                    generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[1].Lambda,A.m)
                     Dv += hbar*self.lasers[i].k/A.m+generatedPhotonKick
                     hits[t_idx, a_idx, i] = - generatedPhotonKick / np.linalg.norm(generatedPhotonKick)
                 OneStep(A, Dv, stepTime)
+            
+            for laser in electricalFields:
+                laser(0,0,0,dt=stepTime)
         self.lastPositons = positions
         is_NotNone = np.vectorize(lambda x: x is not None)
         self.lastHits = np.where(is_NotNone(hits))
         self.lastGeneratedPhotons = hits[self.lastHits]
         return positions
     
+    # lastPositons:           array[nOfTimes][nOfAtoms][3] positions of each atom at each time frame
+    # lastHits:               array{timeIndex, atomIndex, laserIndex}[nOfHits] all the recorded, specifies the time, atom and laser involved in the hit
+    # lastGeneratedPhotons:   array[nOfHits][3] the generated photons for each hit
+
     def plotTrajectories(self):
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
@@ -1017,12 +1071,18 @@ class experiment:
             ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
             ax.scatter(self.lastPositons[0, atom_idx, 0], self.lastPositons[0, atom_idx, 1], self.lastPositons[0, atom_idx, 2])
         for laser_idx in range(len(self.lasers)):
-            laserHits = np.where(self.lastHits[2] == laser_idx)
+            laserHits = np.where(self.lastHits[2] == laser_idx)[0]
             if len(laserHits) > 0:
                 time_idx = self.lastHits[0][laserHits]
                 atom_idx = self.lastHits[1][laserHits]
                 ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
-                           label=f'laser {laser_idx+1} hits', s=7)
+                           label=f'laser {laser_idx+1} hits', s=5)
+                for h in range(len(laserHits)):
+                    position = self.lastPositons[time_idx[h], atom_idx[h]]
+                    directions = self.lastGeneratedPhotons[laserHits[h]] * 6e-7
+                    ax.quiver(position[0], position[1], position[2], 
+                              directions[0], directions[1], directions[2], color='red')
+                # ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
                 
         ax.set_xlabel('X Position (m)')
         ax.set_ylabel('Y Position (m)')
@@ -1076,9 +1136,9 @@ class Camera:
         normalizedHits = normalizedHits.astype(int)
         image = np.zeros((self.resolution, self.resolution))
         for hit in normalizedHits.T:
-            image[hit[0]][hit[1]] += 1
+            image[hit[1]][hit[0]] += 1
         if plot:
-            plt.figure(figsize=(6, 6))  # Ensure the plot is always square
+            plt.figure(figsize=(14, 12))  # Ensure the plot is always square
             plt.imshow(image, extent=(self.y_range[0], self.y_range[1], self.z_range[0], self.z_range[1]), origin='lower', cmap='viridis', aspect='auto')
             plt.xlim(self.y_range)
             plt.ylim(self.z_range)
