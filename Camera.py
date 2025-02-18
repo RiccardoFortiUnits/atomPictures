@@ -3,13 +3,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.special import j1
 from scipy.interpolate import RegularGridInterpolator
+from scipy.interpolate import interp1d, griddata
 
 
-def ainy(r, u, v):
+def ainy(u, v, r=1):
     # Calculate the 2D Fourier transform
     rho = np.sqrt(u**2 + v**2)
-    result = 2 * np.pi * r**2 * j1(2 * np.pi * r * rho) / (2 * np.pi * r * rho)
-    return result
+    result = 2 * np.pi * r**2 * j1(2 * np.pi * r * rho) / (2 * np.pi * r * rho +.1)
+    return np.abs(result)
 
 def CoordinateChange_extended(data_tuple, x0, y0, z0, angleXY, angleXZ, angleYZ):
     (x, y, z) = data_tuple
@@ -184,19 +185,48 @@ class randExtractor:
     def __init__(self, distribFun, n = 1):
         self.distribFun = distribFun
         self.n = 1
-    def distribFunFromPDF(pdf, ranges, steps):
+    # def distribFunFromPDF(pdf, ranges, steps):
+    #     #todo not working yet
+
+    #     # Create a meshgrid for the given ranges and steps
+    #     grids = [np.linspace(r[0], r[1], 1+int(np.ceil((r[1]-r[0])/s))) for r, s in zip(ranges, steps)]
+    #     meshed_grids = np.meshgrid(*grids, indexing='ij')
+    #     grid_points = np.stack(meshed_grids, axis=-1)
+
+    #     # Evaluate the PDF at each point in the grid
+    #     pdf_values = pdf(*[grid_points[..., i] for i in range(len(ranges))])
+    #     return RegularGridInterpolator(grids, pdf_values)
+
+    def distribFunFromPDF_2D(pdf, ranges, steps):        
         # Create a meshgrid for the given ranges and steps
         grids = [np.linspace(r[0], r[1], 1+int(np.ceil((r[1]-r[0])/s))) for r, s in zip(ranges, steps)]
         meshed_grids = np.meshgrid(*grids, indexing='ij')
         grid_points = np.stack(meshed_grids, axis=-1)
 
-        # Evaluate the PDF at each point in the grid
         pdf_values = pdf(*[grid_points[..., i] for i in range(len(ranges))])
 
-        
-        return RegularGridInterpolator(grids, pdf_values)
+        #generic probability of finding x (independently from the value of y)
+        pdf_values_x = np.sum(pdf_values, axis=1)
+        cdf_values_x = np.cumsum(pdf_values_x)
+        cdf_values_x /= cdf_values_x[-1]
 
-    def getRand(self):
+        #probability of finding y, given a fixed value for x
+        cdf_values_y = np.cumsum(pdf_values, axis = 1)
+        cdf_values_y = (cdf_values_y.T / cdf_values_y[ :,-1]).T
+        inverse_cdf_x_interp = interp1d(cdf_values_x, grids[0], kind='cubic', fill_value="extrapolate")
+        cdf_values_y[:,0]=0#if the first value is not 0, when we then interpolate it is possible that the random number is lower than this value, and thus the interpolation will return NaN
+        inverse_y_points = np.dstack((meshed_grids[0], cdf_values_y)).reshape(-1, 2)#[[grids[0][i], cdf_values_y[i][j]] for i in range(len(grids[0])) for j in range(len(cdf_values_y[i]))]
+        inverse_y_values = np.reshape(meshed_grids[0].T, (-1))
+
+        def get_x_y(rand1,rand2):
+            
+            x = inverse_cdf_x_interp(rand1)
+            y = griddata(inverse_y_points, inverse_y_values, np.column_stack((x,rand2)), method='linear')
+            return x,y
+        return get_x_y
+        
+
+    def __call__(self):
         return self.distribFun(np.random.random(self.n))
 
 # positions  = np.array([[0,0,0],[0,0,0],[0,0.5,0],   [0,-0.5,0],   [0,.2,.2]])
@@ -210,14 +240,24 @@ class randExtractor:
 # print(pg.pixels)
 
 
-x=np.linspace(-1,1)
-
-y=np.abs(x)
-f=randExtractor.distribFunFromPDF(lambda x,y : np.abs(x)* np.sign(y)/2+1, [(-1,1), (-1,1)], [.5,.25])
+def gaussian(x,y, mean=0, std_dev=1):
+    r=np.sqrt(x**2+y**2)
+    return (1/(std_dev * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((r - mean) / std_dev)**2)+ (np.sign(x)+1)*(np.sign(y)+1)/40
+f=randExtractor.distribFunFromPDF_2D(ainy, [[-2,2]]*2, [.03]*2)
 
 # plt.plot(x,y)
-
-q=f(np.random.random(1000))
-plt.scatter(q[:,0],q[:,1])
+       
+q=f(np.random.random(10000), np.random.random(10000))
+plt.scatter(q[0],q[1], alpha=.03)
 plt.show()
 
+
+# positions  = np.array([[0,0,0],[0,0,0],[0,0.5,0],   [0,-0.5,0],   [0,.2,.2]])
+# directions = np.array([[1,0,0],[1,0,0],[.8,-0.6,0], [.8,-0.6,0],  [1,0,0]  ])
+
+# q=Camera.hitsLens(positions, directions, [1,0,0],[0,0,0], 1)
+# print(q)
+
+# pg = pixelGrid(.5,.5,9,9,randExtractor.distribFunFromPDF_2D(ainy, [[-2,2]]*2, [.13]*2))
+# pg.fillFromLens(q,1,1)
+# print(pg.pixels)
