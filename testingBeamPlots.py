@@ -1,6 +1,7 @@
 import Simulations_Libraries.trajectory_library as trajlib
 import numpy as np
 import matplotlib.pyplot as plt
+from Camera import *
 
 plt.ion()
 
@@ -27,7 +28,7 @@ b = trajlib.Laser(0,0, G_lambd_HOR, P1_G, (MOT_HorSize/2,MOT_HorSize/2), switchi
 b1 = trajlib.Laser(np.pi,0, G_lambd_HOR, P1_G, (MOT_HorSize/2,MOT_HorSize/2), switchingTimes = [dt, 5e-5,  1e-4, 1e-4])
 exp.add_laser(b)
 exp.add_laser(b1)
-result = exp.run(2e-6, dt)#2-50us
+result = exp.run(2e-5, dt)#2-50us
 exp.plotTrajectories()
 
 ##test camera with fake photons
@@ -54,15 +55,27 @@ exp.plotTrajectories()
 # result = exp.run(2e-3, dt)
 # exp.plotTrajectories()
 
+# startPositions = exp.lastPositons[exp.lastHits[:-1]]
+# directions = exp.lastGeneratedPhotons
+
+# c = trajlib.Camera((0,1e-5,0), (np.pi/2,0,0), [-1e-4,1e-4], [-1e-4,1e-4], lambda direction : np.dot(direction,(1,0,0)) >= .9)
+
+
+# image = c.takePicture(startPositions, directions, plot=True)
+
 startPositions = exp.lastPositons[exp.lastHits[:-1]]
 directions = exp.lastGeneratedPhotons
+ainy_normalized = lambda x,y : ainy(x*1e5, y*1e-5)
+Ainy = randExtractor.distribFunFromPDF_2D(ainy_normalized, [[-1e-4,1e-4]]*2, [5e-6]*2)
+magnificationGrid = pixelGrid(1e-4,1e-4,50,50, Ainy)
+quantumEfficiencyGrid = pixelGrid(1e-4,1e-4,200,200, randExtractor.randomLosts(0))
 
-c = trajlib.Camera((0,1e-5,0), (np.pi/2,0,0), [-1e-4,1e-4], [-1e-4,1e-4], lambda direction : np.dot(direction,(1,0,0)) >= .9)
-
+c = Camera(position=(1e-4,0,0), 
+           orientation=(0,0,0), 
+           radius=1e-4,
+           pixelGrids=(magnificationGrid, quantumEfficiencyGrid))
 
 image = c.takePicture(startPositions, directions, plot=True)
-
-
 
 
 input("Press Enter to close the plot window and exit the script...")
