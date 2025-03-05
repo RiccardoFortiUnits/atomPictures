@@ -71,8 +71,8 @@ directions = exp.lastGeneratedPhotons
 def gauss (x,y, A, x0, sigma):
 	rho = np.sqrt(x**2 + y**2)
 	return A * np.exp(-(rho-x0)**2/(2*sigma**2))
-G = randExtractor.distribFunFromPDF_2D(lambda x,y: gauss(np.linalg.norm(np.column_stack((x[0],y[0])), axis=1).reshape((1,-1)),1,0,5e-8**2), [[-1e-6,1e-6]]*2, 5e-8]*2)
-
+# G = randExtractor.distribFunFromPDF_2D(lambda x,y: gauss(np.linalg.norm(np.column_stack((x[0],y[0])), axis=1).reshape((1,-1)),1,0,5e-8**2), [[-1e-6,1e-6]]*2, [5e-8]*2)
+G = randExtractor.distribFunFromradiusPDF_2D_1D(lambda r,z: blur(r,z - 1e-4,1,1,1,1,1), [-1e-6,1e-6], 1e-7, [0.9e-4,1.1e-4], 1e-7)
 #'''
 magnificationGrid = pixelGrid(5e-6,5e-6,200,200, G)
 quantumEfficiencyGrid = pixelGrid(5e-6,5e-6,200,200, randExtractor.randomLosts(0.1))

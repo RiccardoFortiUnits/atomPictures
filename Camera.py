@@ -1,18 +1,37 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.special import j1
+from scipy.special import j1, j0
 from scipy.interpolate import RegularGridInterpolator
 from scipy.interpolate import interp1d, griddata
 from typing import Tuple, List
 import h5py
 import os
+from scipy import integrate
 
 def ainy(u, v, r=1):
 	# Calculate the 2D Fourier transform
 	rho = np.sqrt(u**2 + v**2)
 	result = 2 * np.pi * r**2 * j1(2 * np.pi * r * rho) / (2 * np.pi * r * rho +.1)
 	return np.abs(result)
+
+def blur(r,z, k,E0,f,w,R):
+	s = np.shape(r)
+	r=r.flatten()
+	z=z.flatten()
+	def functionToIntegrate(x,r,z):
+		return x*j0(k*r*x/f)*np.exp(
+			-(x/w)**2
+			-1j*k*x/f
+			-1j*k*z*(x/f)**2
+		)
+	integral = np.zeros_like(r, dtype=np.complex128)
+	for i in range(len(r)):
+		fun=lambda x:functionToIntegrate(x,r[i],z[i])
+		qqq = integrate.quad(fun, 0, R)
+		integral[i] = qqq[0] + 1j*qqq[1]
+	retVal = np.abs(E0 * k / (2 * np.pi * f) * np.exp(-1j * k * z) * integral)
+	return retVal.reshape(s)
 
 def CoordinateChange_extended(data_tuple, x0, y0, z0, angleXY, angleXZ, angleYZ):
 	(x, y, z) = data_tuple
@@ -102,7 +121,10 @@ class pixelGrid:
 		coordinates[:,1] = (coordinates[:,1] / (self.nofYpixels - 1) - .5) * self.ysize
 		return coordinates
 	def fillFromLens(self, rawPhotonPositions):#given a photon at position (lensRadius,0), the expected pixel to be hit will be the one with coordinates (transformedLensRadius,0)
-		psfPhotonPosition = self.PSF(rawPhotonPositions)# * transformedLensRadius / lensRadius
+		if len(rawPhotonPositions[0]) == 3:
+			psfPhotonPosition = self.PSF(rawPhotonPositions[:,:2], -rawPhotonPositions[:,2])# * transformedLensRadius / lensRadius
+		else:
+			psfPhotonPosition = self.PSF(rawPhotonPositions)# * transformedLensRadius / lensRadius
 		x_normalized, y_normalized = self._normalizeCoordinate(psfPhotonPosition[:,0], psfPhotonPosition[:,1])
 		np.add.at(self.pixels, (x_normalized, y_normalized), 1)
 	def fillFromOtherGrid(self, inputGrid : 'pixelGrid'):
@@ -194,7 +216,7 @@ class Camera:
 		actuallyHitting = np.where(np.linalg.norm(hittingPositions, axis=1) <= lensRadius)[0]
 		if focusDistance is None:
 			#the focus is perfect, so the camera position of the photon is the projection of the photon start point on the camera
-			hittingPositions = startPoints[correctOriented,1:3]
+			hittingPositions = startPoints[correctOriented][:,[1,2,0]]
 		else:
 			#todo continue
 			pass
@@ -260,6 +282,9 @@ class randExtractor:
 	@staticmethod
 	def interpolate2D_semigrid(x,y,z,valuesToInterpolate):
 		'''
+		interpolation for a function for which you have computed some values in a semi-grid 
+			(instead of calculating the values for equally distanced values of x and y, only 
+			the x values are equally distanced, and there's no limitation on the y values)
 		x: n-array
 		y: nxm-array
 		z: nxm-array, z[i][j] = x[i] * y[i][j]
@@ -269,10 +294,13 @@ class randExtractor:
 		interpolatedIndex = (valuesToInterpolate[:,0]-x[0])*(len(x)-1)/(x[-1]-x[0])
 		i = interpolatedIndex.astype(int)
 		p = interpolatedIndex - i.astype(float)
-		leftValues = np.array([np.interp(valuesToInterpolate[:,1][j], y[i[j]], z[i[j]]) for j in range(len(i))])
-		i += 1
-		rigthValues = np.array([np.interp(valuesToInterpolate[:,1][j], y[i[j]], z[i[j]]) for j in range(len(i))])
-		return leftValues * (1-p) + rigthValues * p
+		# leftValues = np.array([np.interp(valuesToInterpolate[:,1][j], y[i[j]], z[i[j]]) for j in range(len(i))])
+		# i += 1
+		# rigthValues = np.array([np.interp(valuesToInterpolate[:,1][j], y[i[j]], z[i[j]]) for j in range(len(i))])
+		# return leftValues * (1-p) + rigthValues * p
+		averageY = (y[i].T*(1-p)+y[i+1].T*p).T
+		averageZ = (z[i].T*(1-p)+z[i+1].T*p).T
+		return np.array([np.interp(valuesToInterpolate[:,1][j], averageY[j], averageZ[j]) for j in range(len(i))])
 
 
 	@staticmethod
@@ -298,13 +326,48 @@ class randExtractor:
 		inverse_y_points = np.dstack((meshed_grids[0], cdf_values_y)).reshape(-1, 2)#[[grids[0][i], cdf_values_y[i][j]] for i in range(len(grids[0])) for j in range(len(cdf_values_y[i]))]
 		inverse_y_values = np.reshape(meshed_grids[1].T, (-1))
 
-		def get_x_y(offsets):
+		def get_x_y(offsets, *t):
 			rand = np.random.random(np.shape(offsets))
 			x = inverse_cdf_x_interp(rand[:,0])
 			# y = griddata(inverse_y_points, inverse_y_values, np.column_stack((x,rand[:,1])), method='linear')
 			y = randExtractor.interpolate2D_semigrid(grids[0], cdf_values_y, meshed_grids[1], np.column_stack((x,rand[:,1])))
 			return offsets + np.column_stack((x,y))
 		return get_x_y
+	
+	@staticmethod
+	def distribFunFromradiusPDF_2D_1D(pdf, xrange, xstep, trange, tstep):
+		#use this distribution generator for 2D radial functions (r=sqrt(x^2+y^2)) with an extra control dimension t (PDF(r,t) | integr(PDF(x,t) dx) = 1 for each t)
+		#the generated extractor will take as inputs the value t (and an offset for (x,y)) and return a random value (x,y)
+		f = randExtractor.distribFunFromPDF_1D_1D(pdf, xrange, xstep, trange, tstep)
+		def get_x_y(offset, t):
+			randAngle = np.random.random(np.shape(t)) * 2 * np.pi
+			r = f(np.zeros_like(t),t)
+			return offset + np.column_stack((r*np.cos(randAngle), r*np.sin(randAngle)))
+		return get_x_y
+
+	@staticmethod
+	def distribFunFromPDF_1D_1D(pdf, xrange, xstep, trange, tstep):
+		#use this distribution generator for 1D functions with an extra control dimension t (PDF(x,t) | integr(PDF(x,t) dx) = 1 for each t)
+		#the generated extractor will take as inputs the value t (and an offset for x) and return a random value x
+		# Create a meshgrid for the given ranges and steps
+		ranges = [xrange,trange]
+		steps = [xstep,tstep]
+		grids = [np.linspace(r[0], r[1], 1+int(np.ceil((r[1]-r[0])/s))) for r, s in zip(ranges, steps)]
+		meshed_grids = np.meshgrid(*grids, indexing='ij')
+		grid_points = np.stack(meshed_grids, axis=-1)
+
+		pdf_values = pdf(*[grid_points[..., i] for i in range(len(ranges))])	
+		cdf_values_x = np.cumsum(pdf_values, axis = 0)
+		cdf_values_x -= cdf_values_x[0,:]
+		cdf_values_x /= cdf_values_x[-1,:]
+		
+		def get_x(offsets,t):
+			rand = np.random.random(np.shape(t))
+			# y = griddata(inverse_y_points, inverse_y_values, np.column_stack((x,rand[:,1])), method='linear')
+			x = randExtractor.interpolate2D_semigrid(grids[1], cdf_values_x.T, meshed_grids[0].T, np.column_stack((t,rand)))
+			return offsets + x
+		return get_x
+	
 	@staticmethod
 	def randomLosts(lostProbability):
 		def removeLost(data):
@@ -351,7 +414,34 @@ if __name__ == '__main__':
 	# plt.show()
 	# print(pg.pixels)
 
-	c = cMosGrid(1,1,100,100, lambda x:x, "Orca_testing/shots/")
-	c.fillFromLens(np.array([[0,0]]))
-	plt.imshow(c.pixels)
+	# c = cMosGrid(1,1,100,100, lambda x:x, "Orca_testing/shots/")
+	# c.fillFromLens(np.array([[0,0]]))
+	# plt.imshow(c.pixels)
+	# plt.show()
+
+	# r=np.linspace(0,1)
+	# z=np.linspace(-2,2)
+	# R,Z = np.meshgrid(r,z)
+	# R=R.reshape((-1,))
+	# Z=Z.reshape((-1,))
+	# res = blur(R,Z,1,1,1,1,1)
+	# res = res.reshape((len(r),len(z)))
+	# res = np.abs(res)
+	# plt.imshow(res)
+	# plt.show()
+
+	def f11(x,t):
+		return np.abs((x-t)**2)
+	f=randExtractor.distribFunFromPDF_1D_1D(f11,[0,1],.05,[0,1],.01)
+	# f11=lambda r,z:blur(r,z,1,1,1,1,.01)
+	# f=randExtractor.distribFunFromPDF_1D_1D(f11,[-1,1],.05,[-1,1],.01)
+	# f(0,np.repeat(0.5,3))
+	"""
+	for t in np.linspace(-.99,0.99,10):		
+		plt.plot(np.sort(f(0,np.repeat(t,10000))))
+	"""
+	t=np.random.random(10000)
+	x=f(np.zeros_like(t),t)
+	plt.scatter(t,x, alpha=.03)
+	#"""
 	plt.show()
