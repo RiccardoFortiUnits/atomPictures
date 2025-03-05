@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 from scipy.special import j1
 from scipy.interpolate import RegularGridInterpolator
 from scipy.interpolate import interp1d, griddata
-from typing import Tuple
+from typing import Tuple, List
+import h5py
+import os
 
 def ainy(u, v, r=1):
 	# Calculate the 2D Fourier transform
@@ -63,14 +65,21 @@ class pixelGrid:
 		self.pixels = np.zeros((nofXpixels,nofYpixels))
 		self.PSF = PSF
 
-	def _normalizeCoordinate(self,x,y):
+	def _normalizeCoordinate(self,x,y, removeOutOfBoundaryValues = True):
 		# Normalize the coordinates to the pixel grid
 		x_normalized = np.round((x / self.xsize + .5) * (self.nofXpixels - 1)).astype(int)
 		y_normalized = np.round((y / self.ysize + .5) * (self.nofYpixels - 1)).astype(int)
 		
-		# Ensure the indices are within the valid range
-		x_normalized = np.clip(x_normalized, 0, self.nofXpixels - 1)
-		y_normalized = np.clip(y_normalized, 0, self.nofYpixels - 1)
+		if removeOutOfBoundaryValues:
+			insideBoundaries = np.logical_and(
+				np.logical_and(x_normalized >= 0, x_normalized <= self.nofXpixels - 1),
+				np.logical_and(y_normalized >= 0, y_normalized <= self.nofYpixels - 1))
+			x_normalized = x_normalized[insideBoundaries]
+			y_normalized = y_normalized[insideBoundaries]
+		else:
+			# Ensure the indices are within the valid range
+			x_normalized = np.clip(x_normalized, 0, self.nofXpixels - 1)
+			y_normalized = np.clip(y_normalized, 0, self.nofYpixels - 1)
 		return x_normalized, y_normalized
 
 	def get_pixel(self, x, y):
@@ -107,15 +116,51 @@ class pixelGrid:
 		mask = np.random.rand(shotsCoordinates.shape[1]) > QE
 		return shotsCoordinates[mask]
 
+class cMosGrid(pixelGrid):
+	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath):
+
+		super().__init__(xsize, ysize, nofXpixels, nofYpixels, PSF)
+		self.setRandomPixelNoises(noisePictureFilePath)
+
+	def setRandomPixelNoises(self, noisePictureFilePath):
+		self.pixelNoises = cMosGrid.getRandomPixelNoises(self.pixels.size, noisePictureFilePath).reshape((self.pixels.shape[0],self.pixels.shape[1], -1))
+	def fillFromLens(self, rawPhotonPositions):#given a photon at position (lensRadius,0), the expected pixel to be hit will be the one with coordinates (transformedLensRadius,0)
+		super().fillFromLens(rawPhotonPositions)
+		self.addNoise()
+
+	def addNoise(self):
+		self.pixels += self.pixelNoises[np.arange(self.pixels.shape[0])[:, None], np.arange(self.pixels.shape[1]), np.random.randint(self.pixelNoises.shape[2], size=self.pixels.shape)]
+
+	@staticmethod	
+	def getPictures(path, imageShape = None):
+		files_to_analyse = os.listdir(path)
+		
+		raw_images = None
+		for i, file in enumerate(files_to_analyse):
+			f = h5py.File(path+file, 'r')
+			img = np.asarray(f['images/Orca/Test_image/frame'])
+			if raw_images is None:
+				if imageShape is None:
+					imageShape = img.shape
+				raw_images = np.zeros((len(files_to_analyse), img.shape[0], img.shape[1]))
+			
+			raw_images[i] = img[:imageShape[0], :imageShape[1]]
+		return raw_images.astype(np.uint8)#so we won't occupy too much memory (we'll still occupy a lot though)
+	def getRandomPixelNoises(nOfPixels, path, imageShape = None):
+		images = cMosGrid.getPictures(path, imageShape)
+		pixels = images.reshape((images.shape[0], -1)).T
+		pixels = pixels[np.random.randint(0, pixels.shape[0]-1, nOfPixels)]
+		return pixels
 
 		
 
 
 class Camera:
-	def __init__(self, position, orientation, radius, pixelGrids : Tuple[pixelGrid] | pixelGrid):
+	def __init__(self, position, orientation, radius, pixelGrids : Tuple[pixelGrid] | List[pixelGrid] | pixelGrid, focusDistance = None):
 		self.position = np.array(position)
 		self.orientation = orientation
 		self.radius = radius
+		self.focusDistance = focusDistance
 		if not isinstance(pixelGrids, tuple):
 			pixelGrids = (pixelGrids,)
 		self.pixelGrids : Tuple[pixelGrid] = pixelGrids
@@ -136,21 +181,31 @@ class Camera:
 		return np.vstack((y, z)).T
 
 	@staticmethod
-	def hitsLens(startPoints, directionVectors, lensPosition, lensAngle, lensRadius):
+	def hitsLens(startPoints, directionVectors, lensPosition, lensAngle, lensRadius, returnHitIndexes = False, focusDistance = None):
+		if len(startPoints) == 0:
+			return startPoints
 		#rotate all the points and directions to the lens's reference frame
 		startPoints = np.array([CoordinateChange_extended(point, *lensPosition, *lensAngle) for point in startPoints])
 		directionVectors = np.array([CoordinateChange_extended(direction, 0,0,0, *lensAngle) for direction in directionVectors])
 		#let's see which photons have the correct orientation to hit the lens
-		correctOriented = np.where((directionVectors[:, 0] > 0) & (startPoints[:, 0] < 0))
+		correctOriented = np.where(np.logical_and((directionVectors[:, 0] > 0), (startPoints[:, 0] < 0)))[0]
 		#let's see which photons hit the lens
 		hittingPositions = Camera.intersect_yz_plane(startPoints[correctOriented], directionVectors[correctOriented])
-		actuallyHitting = np.where(np.linalg.norm(hittingPositions, axis=1) <= lensRadius)
+		actuallyHitting = np.where(np.linalg.norm(hittingPositions, axis=1) <= lensRadius)[0]
+		if focusDistance is None:
+			#the focus is perfect, so the camera position of the photon is the projection of the photon start point on the camera
+			hittingPositions = startPoints[correctOriented,1:3]
+		else:
+			#todo continue
+			pass
+		if returnHitIndexes:
+			return hittingPositions[actuallyHitting], correctOriented[actuallyHitting]
 		return hittingPositions[actuallyHitting]
 	
 	
 
 	def takePicture(self, photonStartPoints, photonDirections, plot = False):
-		hittingPositions = self.hitsLens(photonStartPoints, photonDirections, self.position, self.orientation, self.radius)
+		hittingPositions = self.hitsLens(photonStartPoints, photonDirections, self.position, self.orientation, self.radius, focusDistance=self.focusDistance)
 
 		for grid in self.pixelGrids:
 			grid.clear()
@@ -159,7 +214,7 @@ class Camera:
 		image = self.pixelGrids[-1].pixels
 		if plot:
 			plt.figure(figsize=(14, 12))  # Ensure the plot is always square
-			plt.imshow(image, origin='lower', cmap='viridis', aspect='auto')
+			plt.imshow(image.T, origin='lower', cmap = 'Purples', aspect='auto')
 			plt.colorbar(label='Intensity')
 			plt.xlabel('x')
 			plt.ylabel('y')
@@ -203,6 +258,24 @@ class randExtractor:
 	#     pdf_values = pdf(*[grid_points[..., i] for i in range(len(ranges))])
 	#     return RegularGridInterpolator(grids, pdf_values)
 	@staticmethod
+	def interpolate2D_semigrid(x,y,z,valuesToInterpolate):
+		'''
+		x: n-array
+		y: nxm-array
+		z: nxm-array, z[i][j] = x[i] * y[i][j]
+		valuesToInterpolate: px2 array
+		'''
+		#let's find where the values would be in the x axis
+		interpolatedIndex = (valuesToInterpolate[:,0]-x[0])*(len(x)-1)/(x[-1]-x[0])
+		i = interpolatedIndex.astype(int)
+		p = interpolatedIndex - i.astype(float)
+		leftValues = np.array([np.interp(valuesToInterpolate[:,1][j], y[i[j]], z[i[j]]) for j in range(len(i))])
+		i += 1
+		rigthValues = np.array([np.interp(valuesToInterpolate[:,1][j], y[i[j]], z[i[j]]) for j in range(len(i))])
+		return leftValues * (1-p) + rigthValues * p
+
+
+	@staticmethod
 	def distribFunFromPDF_2D(pdf, ranges, steps):        
 		# Create a meshgrid for the given ranges and steps
 		grids = [np.linspace(r[0], r[1], 1+int(np.ceil((r[1]-r[0])/s))) for r, s in zip(ranges, steps)]
@@ -223,12 +296,13 @@ class randExtractor:
 		inverse_cdf_x_interp = interp1d(cdf_values_x, grids[0], kind='linear', fill_value="extrapolate")
 		cdf_values_y[:,0]=0#if the first value is not 0, when we then interpolate it is possible that the random number is lower than this value, and thus the interpolation will return NaN
 		inverse_y_points = np.dstack((meshed_grids[0], cdf_values_y)).reshape(-1, 2)#[[grids[0][i], cdf_values_y[i][j]] for i in range(len(grids[0])) for j in range(len(cdf_values_y[i]))]
-		inverse_y_values = np.reshape(meshed_grids[0].T, (-1))
+		inverse_y_values = np.reshape(meshed_grids[1].T, (-1))
 
 		def get_x_y(offsets):
 			rand = np.random.random(np.shape(offsets))
 			x = inverse_cdf_x_interp(rand[:,0])
-			y = griddata(inverse_y_points, inverse_y_values, np.column_stack((x,rand[:,1])), method='linear')
+			# y = griddata(inverse_y_points, inverse_y_values, np.column_stack((x,rand[:,1])), method='linear')
+			y = randExtractor.interpolate2D_semigrid(grids[0], cdf_values_y, meshed_grids[1], np.column_stack((x,rand[:,1])))
 			return offsets + np.column_stack((x,y))
 		return get_x_y
 	@staticmethod
@@ -265,13 +339,19 @@ if __name__ == '__main__':
 
 	# positions  = np.array([[0,0,0],[0,0,0],[0,0.5,0],   [0,-0.5,0],   [0,.2,.2]])
 	# directions = np.array([[1,0,0],[1,0,0],[.8,-0.6,0], [.8,-0.6,0],  [1,0,0]  ])
-	positions  = np.array([[0,0,0]]*10000)
-	directions = np.array([[1,0,0]]*10000)
+	# positions  = np.array([[0,0,0]]*100000)
+	# directions = np.array([[1,0,0]]*100000)
 
-	q=Camera.hitsLens(positions, directions, [1,0,0],[0,0,0], 1)
-	print(q)
-	f = randExtractor.distribFunFromPDF_2D(ainy, [[-2,2]]*2, [.1]*2)
-	pg = pixelGrid(4,4,50,50, f)
-	pg.fillFromLens(q,1,1)
-	plt.imshow(pg.pixels)
+	# q=Camera.hitsLens(positions, directions, [1,0,0],[0,0,0], 1)
+	# print(q)
+	# f = randExtractor.distribFunFromPDF_2D(ainy, [[-2,2]]*2, [.01,0.0075])
+	# pg = pixelGrid(4,4,50,50, f)
+	# pg.fillFromLens(q)
+	# plt.imshow(pg.pixels)
+	# plt.show()
+	# print(pg.pixels)
+
+	c = cMosGrid(1,1,100,100, lambda x:x, "Orca_testing/shots/")
+	c.fillFromLens(np.array([[0,0]]))
+	plt.imshow(c.pixels)
 	plt.show()

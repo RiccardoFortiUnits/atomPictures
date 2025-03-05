@@ -24,6 +24,7 @@ sys.path.insert(0, '//ARQUS-NAS/ArQuS Shared/Simulations/MOT capture simulation/
 import Simulations_Libraries.general_library as genlib
 import Simulations_Libraries.Yb_library as yblib
 from scipy.interpolate import interp1d
+from Camera import *
 
 # Universal Constants
 c = const.physical_constants["speed of light in vacuum"][0]
@@ -73,13 +74,13 @@ class Atom:
         self.m = 1.66e-24
     @property
     def position(self):
-        return (self.X, self.Y, self.Z)
+        return np.array([self.X, self.Y, self.Z])
     @position.setter
     def position(self, value):
         (self.X, self.Y, self.Z) = (value[0], value[1], value[2])
     @property
     def velocity(self):
-        return (self.vx, self.vy, self.vz)
+        return np.array([self.vx, self.vy, self.vz])
     @velocity.setter
     def velocity(self, value):
         (self.vx, self.vy, self.vz) = (value[0], value[1], value[2])
@@ -973,7 +974,7 @@ def SpontaneousEmission_qPolarization (wavelength,m):
     """
     Emit a photon of given wavelength in a random direction
     """
-    
+    return SpontaneousEmission(wavelength, m)
     kmod = 2*np.pi/(wavelength)
     k = np.zeros(3)
     theta = inverse_cdf_interp(np.random.uniform(0,1))
@@ -981,6 +982,10 @@ def SpontaneousEmission_qPolarization (wavelength,m):
     k[0] = kmod*np.cos(phi)*np.sin(theta)
     k[2] = kmod*np.sin(phi)*np.sin(theta)
     k[1] = kmod*np.cos(theta)
+    # if np.random.random_integers(0,1)==0:
+    #     k=np.array([-1,0,0])
+    # else:
+    #     k=np.array([0,1,0])
     return hbar*k/m
 
 def Space_grid(Ngrid, cell_center = 37*10**-2, y_lim = 15, z_lim = 8, start = 330e-3):
@@ -1042,14 +1047,75 @@ class experiment:
                 positions[t_idx, a_idx, :] = A.position
                 Dv = np.zeros(3)
                 for i, laser in enumerate(electricalFields):
-                    probabilityList[i] = stepTime * ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[1],laser.wavelength,laser(A.X, A.Y, A.Z),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
+                    probabilityList[i] = 100*stepTime * ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[1],laser.wavelength,laser(A.X, A.Y, A.Z),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
                 rand = np.random.random(len(self.lasers))
                 chosenLasers = [i for i in range(len(self.lasers)) if rand[i] < probabilityList[i]]
                 if len(chosenLasers) > 0:
                     i = np.random.choice(chosenLasers)
                     generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[1].Lambda,A.m)
-                    Dv += hbar*self.lasers[i].k/A.m+generatedPhotonKick
-                    hits[t_idx, a_idx, i] = - generatedPhotonKick / np.linalg.norm(generatedPhotonKick)
+                    Dv += hbar*self.lasers[i].k/A.m-generatedPhotonKick
+                    hits[t_idx, a_idx, i] = + generatedPhotonKick / np.linalg.norm(generatedPhotonKick)
+                OneStep(A, Dv, stepTime)
+            
+            for laser in electricalFields:
+                laser(0,0,0,dt=stepTime)
+        self.lastPositons = positions
+        is_NotNone = np.vectorize(lambda x: x is not None)
+        self.lastHits = np.where(is_NotNone(hits))
+        self.lastGeneratedPhotons = hits[self.lastHits]
+        return positions
+    def new_run(self, time = 1e-6, maxFreeFallDistance = 1e-8):
+        #todo: doesn't work for time-dependent lasers
+
+        ZeemanShift = 0#for now, let's not use this
+        timing_n_positions = [[]] * len(self.atoms)
+        def newPosition_n_speedIfNotHit(startPosition, startSpeed, dt):
+            #calculate the new position of the particle at the time t+dt if there was no interaction with photons during dt
+            #startPosition = x(t), startSpeed = v(t)
+            endPosition = startPosition + startSpeed * dt
+            endSpeed = startSpeed
+            #now let's add gravity
+            endSpeed[2] -= g * dt
+            endPosition[2] -= 0.5 * g * dt**2
+            return endPosition, endSpeed
+        
+        for A in self.atoms:
+            t = 0
+            timings = []
+            positions = []
+            hittingTime = np.zeros(len(self.lasers))
+            while t < time:
+                timings.append(t)
+                positions.append(A.position)
+                # assume the atom would experience the same fields if it doesn't move too much (But we'll have to still consider gravity, and the fact that some lasers are time-dependent)
+                maxT = 1e-6#todo                
+                for i, laser in enumerate(electricalFields):
+                    #let's extract the random times at which each laser would hit the atom
+                    hittingTime[i] = np.random.random() / ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[1],laser.wavelength,laser(A.X, A.Y, A.Z),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
+                hittingLaserIdx = np.argmin(hittingTime)
+                if hittingTime[hittingLaserIdx] < maxT:#would it hit the atom during the considered time?
+                    hitTime = hittingTime[hittingLaserIdx]
+                    hitPosition, hitspeed = newPosition_n_speedIfNotHit(A.position, [A.vx, A.vy, A.vz], hitTime)
+                    generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[1].Lambda,A.m)
+                    
+        times = np.arange(0, time, stepTime)
+        positions = np.zeros((len(times), len(self.atoms), 3))
+        hits = np.empty((len(times), len(self.atoms), len(self.lasers)), dtype=object)
+        probabilityList = np.zeros(len(self.lasers))
+        electricalFields = [laser.electricalField() for laser in self.lasers]
+        for t_idx, tau in enumerate(times):#it would be nice to advance in time with different dt, depending on if the atom was excited or not, but then you would have different times for each atom
+            for a_idx, A in enumerate(self.atoms):
+                positions[t_idx, a_idx, :] = A.position
+                Dv = np.zeros(3)
+                for i, laser in enumerate(electricalFields):
+                    probabilityList[i] = 100*stepTime * ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[1],laser.wavelength,laser(A.X, A.Y, A.Z),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
+                rand = np.random.random(len(self.lasers))
+                chosenLasers = [i for i in range(len(self.lasers)) if rand[i] < probabilityList[i]]
+                if len(chosenLasers) > 0:
+                    i = np.random.choice(chosenLasers)
+                    generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[1].Lambda,A.m)
+                    Dv += hbar*self.lasers[i].k/A.m-generatedPhotonKick
+                    hits[t_idx, a_idx, i] = + generatedPhotonKick / np.linalg.norm(generatedPhotonKick)
                 OneStep(A, Dv, stepTime)
             
             for laser in electricalFields:
@@ -1064,9 +1130,18 @@ class experiment:
     # lastHits:               array{timeIndex, atomIndex, laserIndex}[nOfHits] all the recorded, specifies the time, atom and laser involved in the hit
     # lastGeneratedPhotons:   array[nOfHits][3] the generated photons for each hit
 
-    def plotTrajectories(self):
+    def plotTrajectoriesAndCameraAcquisition(self, camera : Camera):
+        hitPositions, hitIdx = camera.hitsLens(self.lastPositons[self.lastHits[0], self.lastHits[1]], self.lastGeneratedPhotons, camera.position, camera.orientation, camera.radius, returnHitIndexes=True)
+        hitCamera = np.zeros((len(self.lastHits[0])), dtype=bool)
+        hitCamera[hitIdx] = True
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
+        min_bounds = np.min(self.lastPositons, axis=(0, 1))
+        max_bounds = np.max(self.lastPositons, axis=(0, 1))
+        maxRange = np.max(max_bounds - min_bounds)
+        baseQuiverLength = maxRange / 20
+        min_bounds = (max_bounds + min_bounds) / 2 - maxRange / 2
+        max_bounds = min_bounds + maxRange
         for atom_idx in range(len(self.atoms)):
             ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
             ax.scatter(self.lastPositons[0, atom_idx, 0], self.lastPositons[0, atom_idx, 1], self.lastPositons[0, atom_idx, 2])
@@ -1079,7 +1154,44 @@ class experiment:
                            label=f'laser {laser_idx+1} hits', s=5)
                 for h in range(len(laserHits)):
                     position = self.lastPositons[time_idx[h], atom_idx[h]]
-                    directions = self.lastGeneratedPhotons[laserHits[h]] * 6e-7
+                    directions = self.lastGeneratedPhotons[laserHits[h]] * baseQuiverLength
+                    isAHit = hitCamera[laserHits[h]]
+                    if isAHit:
+                        ax.quiver(position[0], position[1], position[2], 
+                                    directions[0], directions[1], directions[2], color='red')
+                        # ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
+                
+        ax.set_xlabel('X Position (m)')
+        ax.set_ylabel('Y Position (m)')
+        ax.set_zlabel('Z Position (m)')
+        ax.set_xlim(min_bounds[0], max_bounds[0])
+        ax.set_ylim(min_bounds[1], max_bounds[1])
+        ax.set_zlim(min_bounds[2], max_bounds[2])
+        ax.set_title('3D Trajectories of Atoms')
+        ax.legend()
+        plt.show()
+    def plotTrajectories(self):
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        min_bounds = np.min(self.lastPositons, axis=(0, 1))
+        max_bounds = np.max(self.lastPositons, axis=(0, 1))
+        maxRange = np.max(max_bounds - min_bounds)
+        quiverLength = maxRange / 20
+        min_bounds = (max_bounds + min_bounds) / 2 - maxRange / 2
+        max_bounds = min_bounds + maxRange
+        for atom_idx in range(len(self.atoms)):
+            ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
+            ax.scatter(self.lastPositons[0, atom_idx, 0], self.lastPositons[0, atom_idx, 1], self.lastPositons[0, atom_idx, 2])
+        for laser_idx in range(len(self.lasers)):
+            laserHits = np.where(self.lastHits[2] == laser_idx)[0]
+            if len(laserHits) > 0:
+                time_idx = self.lastHits[0][laserHits]
+                atom_idx = self.lastHits[1][laserHits]
+                ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
+                           label=f'laser {laser_idx+1} hits', s=5)
+                for h in range(len(laserHits)):
+                    position = self.lastPositons[time_idx[h], atom_idx[h]]
+                    directions = self.lastGeneratedPhotons[laserHits[h]] * quiverLength
                     ax.quiver(position[0], position[1], position[2], 
                               directions[0], directions[1], directions[2], color='red')
                 # ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
@@ -1087,6 +1199,9 @@ class experiment:
         ax.set_xlabel('X Position (m)')
         ax.set_ylabel('Y Position (m)')
         ax.set_zlabel('Z Position (m)')
+        ax.set_xlim(min_bounds[0], max_bounds[0])
+        ax.set_ylim(min_bounds[1], max_bounds[1])
+        ax.set_zlim(min_bounds[2], max_bounds[2])
         ax.set_title('3D Trajectories of Atoms')
         ax.legend()
         plt.show()

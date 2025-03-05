@@ -17,15 +17,15 @@ P1_G = 5.2*10**-2
 ##test experiment and trajectory plot
 exp = trajlib.experiment()
 
-for i in range(1):
-    exp.add_atom(trajlib.Ytterbium(0,0,0, 0,0,0,isotope=174))
+for i in range(10):
+	exp.add_atom(trajlib.Ytterbium(*(np.random.random((3,))*1e-6-.5e-6), 0,0,0,isotope=174))
 dt = 5e-9
 detuning_G_HOR = -5.5*trajlib.MHz
 G_freq_HOR = trajlib.c/(exp.atoms[0].transitions[1].Lambda) + detuning_G_HOR
 G_lambd_HOR = trajlib.c/G_freq_HOR
 
-b = trajlib.Laser(0,0, G_lambd_HOR, P1_G, (MOT_HorSize/2,MOT_HorSize/2), switchingTimes =      [dt, -5e-5, 1e-4, 1e-4])
-b1 = trajlib.Laser(np.pi,0, G_lambd_HOR, P1_G, (MOT_HorSize/2,MOT_HorSize/2), switchingTimes = [dt, 5e-5,  1e-4, 1e-4])
+b = trajlib.Laser(0,0, G_lambd_HOR, P1_G, (MOT_HorSize/2,MOT_HorSize/2), switchingTimes =      [dt, -5e-7, 1e-6, 1e-6])
+b1 = trajlib.Laser(np.pi,0, G_lambd_HOR, P1_G, (MOT_HorSize/2,MOT_HorSize/2), switchingTimes = [dt, 5e-7,  1e-6, 1e-6])
 exp.add_laser(b)
 exp.add_laser(b1)
 result = exp.run(2e-5, dt)#2-50us
@@ -65,17 +65,37 @@ exp.plotTrajectories()
 
 startPositions = exp.lastPositons[exp.lastHits[:-1]]
 directions = exp.lastGeneratedPhotons
-ainy_normalized = lambda x,y : ainy(x*1e5, y*1e-5)
-Ainy = randExtractor.distribFunFromPDF_2D(ainy_normalized, [[-1e-4,1e-4]]*2, [5e-6]*2)
-magnificationGrid = pixelGrid(1e-4,1e-4,50,50, Ainy)
-quantumEfficiencyGrid = pixelGrid(1e-4,1e-4,200,200, randExtractor.randomLosts(0))
+# ainy_normalized = lambda x,y : ainy(x*1e10, y*1e10)
+# Ainy = randExtractor.distribFunFromPDF_2D(ainy_normalized, [[-1e-4,1e-4]]*2, [5e-5]*2)
 
+def gauss (x,y, A, x0, sigma):
+	rho = np.sqrt(x**2 + y**2)
+	return A * np.exp(-(rho-x0)**2/(2*sigma**2))
+G = randExtractor.distribFunFromPDF_2D(lambda x,y: gauss(np.linalg.norm(np.column_stack((x[0],y[0])), axis=1).reshape((1,-1)),1,0,5e-8**2), [[-1e-6,1e-6]]*2, 5e-8]*2)
+
+#'''
+magnificationGrid = pixelGrid(5e-6,5e-6,200,200, G)
+quantumEfficiencyGrid = pixelGrid(5e-6,5e-6,200,200, randExtractor.randomLosts(0.1))
 c = Camera(position=(1e-4,0,0), 
-           orientation=(0,0,0), 
-           radius=1e-4,
-           pixelGrids=(magnificationGrid, quantumEfficiencyGrid))
+		   orientation=(0,0,0), 
+		   radius=1e-4,
+		   pixelGrids=(magnificationGrid, quantumEfficiencyGrid))
+'''
+magnificationGrid = pixelGrid(32e-3,32e-3, 50,50, lambda x:x)
+quantumEfficiencyGrid = pixelGrid(32e-3,32e-3, 50,50, randExtractor.randomLosts(0.1))
+c = Camera(position=(25.5e-3,0,0), 
+		   orientation=(0,0,0), 
+		   radius=16e-3,
+		   pixelGrids=(magnificationGrid, quantumEfficiencyGrid))
+#'''
+
 
 image = c.takePicture(startPositions, directions, plot=True)
+
+quantumEfficiencyGrid = cMosGrid(5e-6,5e-6,200,200, randExtractor.randomLosts(0.1), "Orca_testing/shots/")
+c.pixelGrids = (magnificationGrid, quantumEfficiencyGrid)
+image = c.takePicture(startPositions, directions, plot=True)
+exp.plotTrajectoriesAndCameraAcquisition(c)
 
 
 input("Press Enter to close the plot window and exit the script...")
