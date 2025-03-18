@@ -970,14 +970,18 @@ def initializeSpontaneousEmission_qPolarization():
     cdf_values = cdf(x_values)
     inverse_cdf_interp = interp1d(cdf_values, x_values, kind='cubic', fill_value="extrapolate")
 initializeSpontaneousEmission_qPolarization()
+def qPolarizationAnglePDF(theta):
+        return 3+np.cos(2*theta)
+
+qPolarizationExtractor = randExtractor.distribFunFromPDF_1D(qPolarizationAnglePDF, (0, np.pi), 200)
 def SpontaneousEmission_qPolarization (wavelength,m):
     """
     Emit a photon of given wavelength in a random direction
     """
-    return SpontaneousEmission(wavelength, m)
+    # return SpontaneousEmission(wavelength, m)
     kmod = 2*np.pi/(wavelength)
     k = np.zeros(3)
-    theta = inverse_cdf_interp(np.random.uniform(0,1))
+    theta = qPolarizationExtractor(0)
     phi = np.random.uniform(0,2*np.pi)
     k[0] = kmod*np.cos(phi)*np.sin(theta)
     k[2] = kmod*np.sin(phi)*np.sin(theta)
@@ -1047,12 +1051,12 @@ class experiment:
                 positions[t_idx, a_idx, :] = A.position
                 Dv = np.zeros(3)
                 for i, laser in enumerate(electricalFields):
-                    probabilityList[i] = 100*stepTime * ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[1],laser.wavelength,laser(A.X, A.Y, A.Z),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
+                    probabilityList[i] = stepTime * ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[0],laser.wavelength,laser(A.X, A.Y, A.Z),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
                 rand = np.random.random(len(self.lasers))
                 chosenLasers = [i for i in range(len(self.lasers)) if rand[i] < probabilityList[i]]
                 if len(chosenLasers) > 0:
                     i = np.random.choice(chosenLasers)
-                    generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[1].Lambda,A.m)
+                    generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[0].Lambda,A.m)
                     Dv += hbar*self.lasers[i].k/A.m-generatedPhotonKick
                     hits[t_idx, a_idx, i] = + generatedPhotonKick / np.linalg.norm(generatedPhotonKick)
                 OneStep(A, Dv, stepTime)
@@ -1087,16 +1091,20 @@ class experiment:
             while t < time:
                 timings.append(t)
                 positions.append(A.position)
-                # assume the atom would experience the same fields if it doesn't move too much (But we'll have to still consider gravity, and the fact that some lasers are time-dependent)
+                # assume the atom would experience the same fields if it doesn't move too much and if not too much time passes (But we'll have to still consider gravity)
                 maxT = 1e-6#todo                
                 for i, laser in enumerate(electricalFields):
                     #let's extract the random times at which each laser would hit the atom
-                    hittingTime[i] = np.random.random() / ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[1],laser.wavelength,laser(A.X, A.Y, A.Z),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
+                    hittingTime[i] = np.random.random() / ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[0],laser.wavelength,laser(A.X, A.Y, A.Z),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
                 hittingLaserIdx = np.argmin(hittingTime)
                 if hittingTime[hittingLaserIdx] < maxT:#would it hit the atom during the considered time?
                     hitTime = hittingTime[hittingLaserIdx]
-                    hitPosition, hitspeed = newPosition_n_speedIfNotHit(A.position, [A.vx, A.vy, A.vz], hitTime)
-                    generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[1].Lambda,A.m)
+                    A.position, hitspeed = newPosition_n_speedIfNotHit(A.position, A.velocity, hitTime)
+                    t+=hitspeed
+                    timings.append(t)
+                    positions.append(A.position)
+                    generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[0].Lambda,A.m)
+                    
                     
         times = np.arange(0, time, stepTime)
         positions = np.zeros((len(times), len(self.atoms), 3))
@@ -1108,12 +1116,12 @@ class experiment:
                 positions[t_idx, a_idx, :] = A.position
                 Dv = np.zeros(3)
                 for i, laser in enumerate(electricalFields):
-                    probabilityList[i] = 100*stepTime * ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[1],laser.wavelength,laser(A.X, A.Y, A.Z),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
+                    probabilityList[i] = 100*stepTime * ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[0],laser.wavelength,laser(A.X, A.Y, A.Z),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
                 rand = np.random.random(len(self.lasers))
                 chosenLasers = [i for i in range(len(self.lasers)) if rand[i] < probabilityList[i]]
                 if len(chosenLasers) > 0:
                     i = np.random.choice(chosenLasers)
-                    generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[1].Lambda,A.m)
+                    generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[0].Lambda,A.m)
                     Dv += hbar*self.lasers[i].k/A.m-generatedPhotonKick
                     hits[t_idx, a_idx, i] = + generatedPhotonKick / np.linalg.norm(generatedPhotonKick)
                 OneStep(A, Dv, stepTime)
