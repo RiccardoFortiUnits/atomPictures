@@ -72,6 +72,11 @@ class Atom:
         self.vz = vz
         self.transitions : List[yblib.Transition] = []
         self.m = 1.66e-24
+        self.initialPosition = np.array([x,y,z])
+        self.initialSpeed = np.array([vx,vy,vz])
+    def reset(self):
+        self.X, self.Y, self.Z = self.initialPosition
+        self.vx, self.vy, self.vz = self.initialSpeed
     @property
     def position(self):
         return np.array([self.X, self.Y, self.Z])
@@ -195,21 +200,21 @@ class Laser(Beam):
         if function is None:
             function = lambda coordinate_tuple, **kwargs: GaussianBeam(coordinate_tuple, wavelength, w0[0], w0[1], Intensity)
         if switchingTimes is not None:
-            afterStartTime = switchingTimes[1] <= 0
-            time = -switchingTimes[1] if afterStartTime else 0
-            repetition = 0
+            self.afterStartTime = switchingTimes[1] <= 0
+            self.initialTime = -switchingTimes[1] if self.afterStartTime else 0
+            self.time = self.initialTime
+            self.repetition = 0
             def enableLaser(dt):
-                nonlocal time, afterStartTime, repetition
-                repetition += 1
-                time += dt
-                if not afterStartTime:
-                    if time >= switchingTimes[1]:
-                        afterStartTime = True
-                        time -= switchingTimes[1]
-                elif time > switchingTimes[2] + switchingTimes[3]:
-                    time -= switchingTimes[2] + switchingTimes[3]
-                if afterStartTime:
-                    if time >= switchingTimes[2]:
+                self.repetition += 1
+                self.time += dt
+                if not self.afterStartTime:
+                    if self.time >= switchingTimes[1]:
+                        self.afterStartTime = True
+                        self.time -= switchingTimes[1]
+                elif self.time > switchingTimes[2] + switchingTimes[3]:
+                    self.time -= switchingTimes[2] + switchingTimes[3]
+                if self.afterStartTime:
+                    if self.time >= switchingTimes[2]:
                         return False
                     return True
                 return False
@@ -218,6 +223,10 @@ class Laser(Beam):
             raise ValueError(f'The function must be callable, got {type(function)} instead')
         
         super().__init__(angle, x0, function)
+    def reset(self):
+        if hasattr(self, 'initialTime'):
+            self.time = self.initialTime
+            self.repetition = 0
     def electricalField(self) -> Laser:
         #use this function to obtain the electrical field of this beam. It will still be of class Laser, but the intensity will be proportional to the electrical field instead of the laser intensity
         return self.withExtraFunction(genlib.I2E_0)
@@ -1038,7 +1047,11 @@ class experiment:
         self.atoms.append(atom)
     def add_laser(self, laser : Laser):
         self.lasers.append(laser)
-    
+    def reset(self):
+        for atom in self.atoms:
+            atom.reset()
+        for laser in self.lasers:
+            laser.reset()
     def run(self, time = 1e-6, stepTime = 1e-9):
         ZeemanShift = 0#for now, let's not use this
         times = np.arange(0, time, stepTime)
@@ -1138,8 +1151,26 @@ class experiment:
     # lastHits:               array{timeIndex, atomIndex, laserIndex}[nOfHits] all the recorded, specifies the time, atom and laser involved in the hit
     # lastGeneratedPhotons:   array[nOfHits][3] the generated photons for each hit
 
+    def getScatteredPhotons(self):
+        startPositions = self.lastPositons[self.lastHits[:-1]]
+        directions = self.lastGeneratedPhotons
+        return startPositions, directions
+    def getScatteringDistributionFromRepeatedRuns(self, time = 1e-6, stepTime = 1e-9, nOfRuns = 100, camera : Camera | None = None):
+        receivedPhotons = np.zeros(nOfRuns)
+        for i in range(nOfRuns):
+            print(i)
+            self.run(time, stepTime)
+            positions, directions = self.getScatteredPhotons()
+            if camera is None:
+                receivedPhotons[i] = len(positions)
+            else:
+                photons = camera.hitLens(positions, directions)
+                receivedPhotons[i] = len(photons)
+            self.reset()
+        return receivedPhotons
+
     def plotTrajectoriesAndCameraAcquisition(self, camera : Camera):
-        hitPositions, hitIdx = camera.hitsLens(self.lastPositons[self.lastHits[0], self.lastHits[1]], self.lastGeneratedPhotons, camera.position, camera.orientation, camera.radius, returnHitIndexes=True)
+        hitPositions, hitIdx = camera.hitLens(self.lastPositons[self.lastHits[0], self.lastHits[1]], self.lastGeneratedPhotons, returnHitIndexes=True)
         hitCamera = np.zeros((len(self.lastHits[0])), dtype=bool)
         hitCamera[hitIdx] = True
         fig = plt.figure()

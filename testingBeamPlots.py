@@ -2,6 +2,8 @@ import Simulations_Libraries.trajectory_library as trajlib
 import numpy as np
 import matplotlib.pyplot as plt
 from Camera import *
+from scipy.stats import poisson
+from scipy.optimize import curve_fit
 import Simulations_Libraries.general_library as genlib
 plt.ion()
 
@@ -17,7 +19,7 @@ power = 10e-3
 ##test experiment and trajectory plot
 exp = trajlib.experiment()
 
-for i in range(10):
+for i in range(1):
 	exp.add_atom(trajlib.Ytterbium(*(np.random.random((3,))*1e-6-.5e-6), 0,0,0,isotope=174))
 dt = 5e-9
 detuning = 0#-5.5*trajlib.MHz
@@ -29,8 +31,8 @@ b = trajlib.Laser(0,0, Lambda, power, (waist/2,waist/2), switchingTimes =      [
 b1 = trajlib.Laser(np.pi,0, Lambda, power, (waist/2,waist/2), switchingTimes = [dt, 200e-9,  400e-9, 400e-9])
 exp.add_laser(b)
 exp.add_laser(b1)
-result = exp.run(5e-6, dt)#2-50us
-exp.plotTrajectories()
+# result = exp.run(5e-6, dt)#2-50us
+# exp.plotTrajectories()
 
 ##test camera with fake photons
 # c = trajlib.Camera((1,0,0), (0,0,0), [-1,1], [-1,1], lambda direction : np.dot(direction,(1,0,0)) >= 0.5)
@@ -71,15 +73,15 @@ effectiveFocalLength = 25.5e-3
 tweezerWaist = 1e-4
 objective_Ray = 15.3e-3
 
-startPositions = exp.lastPositons[exp.lastHits[:-1]]
-directions = exp.lastGeneratedPhotons
-# ainy_normalized = lambda x,y : ainy(x*1e10, y*1e10)
-# Ainy = randExtractor.distribFunFromPDF_2D(ainy_normalized, [[-1e-4,1e-4]]*2, [5e-5]*2)
+# startPositions = exp.lastPositons[exp.lastHits[:-1]]
+# directions = exp.lastGeneratedPhotons
+# # ainy_normalized = lambda x,y : ainy(x*1e10, y*1e10)
+# # Ainy = randExtractor.distribFunFromPDF_2D(ainy_normalized, [[-1e-4,1e-4]]*2, [5e-5]*2)
 
-def gauss (x,y, A, x0, sigma):
-	rho = np.sqrt(x**2 + y**2)
-	return A * np.exp(-(rho-x0)**2/(2*sigma**2))
-# G = randExtractor.distribFunFromPDF_2D(lambda x,y: gauss(x, y,1,0,1e-8), [[-1e-9,1e-9]]*2, [5e-11]*2)
+# def gauss (x,y, A, x0, sigma):
+# 	rho = np.sqrt(x**2 + y**2)
+# 	return A * np.exp(-(rho-x0)**2/(2*sigma**2))
+# # G = randExtractor.distribFunFromPDF_2D(lambda x,y: gauss(x, y,1,0,1e-8), [[-1e-9,1e-9]]*2, [5e-11]*2)
 G = randExtractor.distribFunFromradiusPDF_2D_1D(lambda r,z: blur(r,z - 1e-4,k,E0,effectiveFocalLength, tweezerWaist, objective_Ray), [-1e-8,1e-8], 1e-9, [0.9e-4,1.1e-4], 1e-7)
 #'''
 magnificationGrid = pixelGrid(5e-6,5e-6,200,200, G)
@@ -98,12 +100,30 @@ c = Camera(position=(25.5e-3,0,0),
 #'''
 
 
-image = c.takePicture(startPositions, directions, plot=True)
+# image = c.takePicture(startPositions, directions, plot=True)
 
-quantumEfficiencyGrid = cMosGrid(5e-6,5e-6,200,200, randExtractor.randomLosts(0.1), "Orca_testing/shots/", imageStart = (10,10), imageSizes = (-10,-10))
-c.pixelGrids = (magnificationGrid, quantumEfficiencyGrid)
-image = c.takePicture(startPositions, directions, plot=True)
-exp.plotTrajectoriesAndCameraAcquisition(c)
+# quantumEfficiencyGrid = cMosGrid(5e-6,5e-6,200,200, randExtractor.randomLosts(0.1), "Orca_testing/shots/", imageStart = (10,10), imageSizes = (-10,-10))
+# c.pixelGrids = (magnificationGrid, quantumEfficiencyGrid)
+# image = c.takePicture(startPositions, directions, plot=True)
+# exp.plotTrajectoriesAndCameraAcquisition(c)
 
+
+p = exp.getScatteringDistributionFromRepeatedRuns(1e-6, dt, 1000, c)
+# Define the Poisson distribution function
+def poisson_dist(k, lamb):
+    return poisson.pmf(k, lamb)
+
+# Calculate the histogram
+unique, counts = np.unique(p, return_counts=True)
+bin_centers = unique
+counts = counts / np.sum(counts)  # Normalize counts to get probabilities
+
+# Fit the histogram data to the Poisson distribution
+params, _ = curve_fit(poisson_dist, bin_centers, counts, p0=[np.mean(p)])
+
+# Plot the fitted Poisson distribution
+plt.plot(bin_centers, poisson_dist(bin_centers, *params), label=f'Poisson fit (mean = {params[0]})')
+plt.plot(bin_centers, counts, label='simulated data')
+plt.legend()
 
 input("Press Enter to close the plot window and exit the script...")
