@@ -8,11 +8,12 @@ from typing import Tuple, List
 import h5py
 import os
 from scipy import integrate
+from functools import partial
 
 def plot2D_function(function, x_range, y_range, resolution_x, resolution_y):
 	X,Y=np.meshgrid(np.linspace(x_range[0],x_range[1],resolution_x),np.linspace(y_range[0],y_range[1],resolution_y))
 	Z=function(X,Y)
-	plt.imshow(Z.T, extent=(x_range[0], x_range[1], y_range[0], y_range[1]), origin='lower', cmap='viridis', aspect='auto')
+	plt.imshow(Z.T, extent=(y_range[0], y_range[1], x_range[0], x_range[1]), origin='lower', cmap='viridis', aspect='auto')
 	plt.show()
 def ainy(u, v, r=1):
 	# Calculate the 2D Fourier transform
@@ -26,17 +27,12 @@ def blur(r,z, k,E0,f,w,R):
 	z=z.flatten()
 	def functionToIntegrate(x,r,z):
 		return x*j0(k*r*x/f)*np.exp(
-			-(x/w)**2
-			-1j*k*x/f
-			-1j*k*z*(x/f)**2
+			-(x/w)**2 - 0.5j*k*z*(x/f)**2
 		)
-	integral = np.zeros_like(r, dtype=np.complex128)
-	for i in range(len(r)):
-		fun=lambda x:functionToIntegrate(x,r[i],z[i])
-		real_integral = integrate.quad(lambda x: np.real(fun(x)), 0, R)[0]
-		imag_integral = integrate.quad(lambda x: np.imag(fun(x)), 0, R)[0]
-		integral[i] = real_integral + 1j * imag_integral
-	retVal = np.abs(E0 * k / (2 * np.pi * f) * np.exp(-1j * k * z) * integral)**2
+	usedR = min(R, 4*w)
+	x = np.repeat(np.linspace(0,usedR,1000)[None,:],len(r), axis=0)
+	integral = np.sum(functionToIntegrate(x, r[:,None],z[:,None]), axis=1) * usedR/x.shape[1]
+	retVal = np.abs(E0 * k / (2 * np.pi * f) * np.exp(-1j * k * z) * integral)
 	return retVal.reshape(s)
 
 def CoordinateChange_extended(data_tuple, x0, y0, z0, angleXY, angleXZ, angleYZ):
@@ -94,8 +90,8 @@ class pixelGrid:
 
 	def _normalizeCoordinate(self,x,y, removeOutOfBoundaryValues = True):
 		# Normalize the coordinates to the pixel grid
-		x_normalized = np.round((x * self.magnification / self.xsize + .5) * (self.nofXpixels - 1)).astype(int)
-		y_normalized = np.round((y * self.magnification / self.ysize + .5) * (self.nofYpixels - 1)).astype(int)
+		x_normalized = np.round((x / self.xsize + .5) * (self.nofXpixels - 1)).astype(int)
+		y_normalized = np.round((y / self.ysize + .5) * (self.nofYpixels - 1)).astype(int)
 		
 		if removeOutOfBoundaryValues:
 			insideBoundaries = np.logical_and(
@@ -108,6 +104,9 @@ class pixelGrid:
 			x_normalized = np.clip(x_normalized, 0, self.nofXpixels - 1)
 			y_normalized = np.clip(y_normalized, 0, self.nofYpixels - 1)
 		return x_normalized, y_normalized
+	@property
+	def currentNumberOfPhotons(self):
+		return np.sum(self.pixels)
 
 	def get_pixel(self, x, y):
 		x_normalized, y_normalized = self._normalizeCoordinate(x,y)
@@ -125,18 +124,24 @@ class pixelGrid:
 		coordinates = np.argwhere(self.pixels > 0)
 		counts = self.pixels[self.pixels > 0].astype(int)
 		coordinates = np.repeat(coordinates, counts, axis=0).astype(float)
-		coordinates[:,0] = (coordinates[:,0] / (self.nofXpixels - 1) - .5) * self.xsize
-		coordinates[:,1] = (coordinates[:,1] / (self.nofYpixels - 1) - .5) * self.ysize
+		coordinates[:,0] = (coordinates[:,0] / (self.nofXpixels - 1) - .5) * self.xsize * self.magnification
+		coordinates[:,1] = (coordinates[:,1] / (self.nofYpixels - 1) - .5) * self.ysize * self.magnification
 		return coordinates
-	def fillFromLens(self, rawPhotonPositions):#given a photon at position (lensRadius,0), the expected pixel to be hit will be the one with coordinates (transformedLensRadius,0)
+	def fillFromLens(self, rawPhotonPositions):
+		'''
+		rawPhotonPositions: array of 2D positions (could also be a 3D position, if the PSF is also dependent on the z-coordinate)
+
+		returns a dictionary with some extra info (though the default pixel grid only returns a non-empty dictionary if there's no photon to work on)
+		'''
 		if len(rawPhotonPositions) == 0:
-			return
+			return {"warning:" : "no photons hitting the lens"}
 		if len(rawPhotonPositions[0]) == 3:
 			psfPhotonPosition = self.PSF(rawPhotonPositions[:,:2], -rawPhotonPositions[:,2])# * transformedLensRadius / lensRadius
 		else:
 			psfPhotonPosition = self.PSF(rawPhotonPositions)# * transformedLensRadius / lensRadius
 		x_normalized, y_normalized = self._normalizeCoordinate(psfPhotonPosition[:,0], psfPhotonPosition[:,1])
 		np.add.at(self.pixels, (x_normalized, y_normalized), 1)
+		return {}
 	def fillFromOtherGrid(self, inputGrid : 'pixelGrid'):
 		psfPositions = self.PSF(inputGrid.getRawPositions())
 		x_normalized, y_normalized = self._normalizeCoordinate(psfPositions[:,0], psfPositions[:,1])
@@ -158,8 +163,10 @@ class cMosGrid(pixelGrid):
 		self.pixelNoises = cMosGrid.getRandomPixelNoises(self.pixels.size, noisePictureFilePath, imageStart, imageSizes)    \
 								.reshape((self.pixels.shape[0],self.pixels.shape[1], -1))
 	def fillFromLens(self, rawPhotonPositions):#given a photon at position (lensRadius,0), the expected pixel to be hit will be the one with coordinates (transformedLensRadius,0)
-		super().fillFromLens(rawPhotonPositions)
+		extraData = super().fillFromLens(rawPhotonPositions)
+		extraData["number of photons before added noise"] = self.currentNumberOfPhotons
 		self.addNoise()
+		return extraData
 
 	def addNoise(self):
 		self.pixels += self.pixelNoises[np.arange(self.pixels.shape[0])[:, None], np.arange(self.pixels.shape[1]), np.random.randint(self.pixelNoises.shape[2], size=self.pixels.shape)]
@@ -243,13 +250,18 @@ class Camera:
 	def hitLens(self, photonStartPoints, photonDirections, returnHitIndexes = False):
 		return self.hitsSpecifiedLens(photonStartPoints, photonDirections, self.position, self.orientation, self.radius, returnHitIndexes, self.focusDistance)	
 
-	def takePicture(self, photonStartPoints, photonDirections, plot = False):
+	def takePicture(self, photonStartPoints, photonDirections, plot = False, saveToFile : str = None, **additionalAttributesToSave):
+		initialNOfPhotons = len(photonDirections)
 		hittingPositions = self.hitLens(photonStartPoints, photonDirections)
-
+		nOfPhotonHittingLens = len(hittingPositions)
+		nOfPhotonsHittingGrid = []
+		extraGridInfos = []
 		for grid in self.pixelGrids:
 			grid.clear()
-			grid.fillFromLens(hittingPositions)
+			extraGridInfos.append(grid.fillFromLens(hittingPositions))
 			hittingPositions = grid.getRawPositions()
+			nOfPhotonsHittingGrid.append(len(hittingPositions))
+		
 		image = self.pixelGrids[-1].pixels
 		if plot:
 			plt.figure(figsize=(14, 12))  # Ensure the plot is always square
@@ -259,6 +271,16 @@ class Camera:
 			plt.ylabel('y')
 			plt.title('2D Function Plot')
 			plt.show()
+		if saveToFile is not None:
+			with h5py.File(saveToFile, 'w') as f:
+				f.create_dataset('image', data=image)
+				f.attrs['initial number of photons'] = initialNOfPhotons
+				f.attrs['number of photons hitting lens'] = nOfPhotonHittingLens
+				for i in range(len(self.pixelGrids)):
+					f.attrs[f'number of photons hitting grid {i}'] = nOfPhotonsHittingGrid[i]
+					for key, val in extraGridInfos[i].items():
+						f.attrs[f'grid {i}, {key}'] = val
+				f.attrs.update(additionalAttributesToSave)
 		return image
 
 
@@ -282,9 +304,11 @@ class Camera:
 		# return image
 
 class randExtractor:
-	def __init__(self, distribFun, n = 1):
+	def __init__(self, distribFun, plotFunction = None):
 		self.distribFun = distribFun
-		self.n = 1
+	
+	def __call__(self, *args, **kwds):
+		return self.distribFun(*args, **kwds)
 	# def distribFunFromPDF(pdf, ranges, steps):
 	#     #todo not working yet
 
@@ -349,18 +373,21 @@ class randExtractor:
 			# y = griddata(inverse_y_points, inverse_y_values, np.column_stack((x,rand[:,1])), method='linear')
 			y = randExtractor.interpolate2D_semigrid(grids[0], cdf_values_y, meshed_grids[1], np.column_stack((x,rand[:,1])))
 			return offsets + np.column_stack((x,y))
-		return get_x_y
+		return randExtractor(get_x_y)
 	
 	@staticmethod
 	def distribFunFromradiusPDF_2D_1D(pdf, xrange, xstep, trange, tstep):
 		#use this distribution generator for 2D radial functions (r=sqrt(x^2+y^2)) with an extra control dimension t (PDF(r,t) | integr(PDF(x,t) dx) = 1 for each t)
 		#the generated extractor will take as inputs the value t (and an offset for (x,y)) and return a random value (x,y)
 		f = randExtractor.distribFunFromPDF_1D_1D(pdf, xrange, xstep, trange, tstep)
+		ff=f.distribFun
 		def get_x_y(offset, t):
 			randAngle = np.random.random(np.shape(t)) * 2 * np.pi
-			r = f(np.zeros_like(t),t)
+			r = ff(np.zeros_like(t),t)
 			return offset + np.column_stack((r*np.cos(randAngle), r*np.sin(randAngle)))
-		return get_x_y
+		f.distribFun = get_x_y
+		return f
+	
 
 	@staticmethod
 	def distribFunFromPDF_1D_1D(pdf, xrange, xstep, trange, tstep):
@@ -383,7 +410,7 @@ class randExtractor:
 			# y = griddata(inverse_y_points, inverse_y_values, np.column_stack((x,rand[:,1])), method='linear')
 			x = randExtractor.interpolate2D_semigrid(grids[1], cdf_values_x.T, meshed_grids[0].T, np.column_stack((t,rand)))
 			return offsets + x
-		return get_x
+		return randExtractor(get_x)
 	@staticmethod
 	def distribFunFromPDF_1D(pdf, ranges, steps):
 		#use this distribution generator for 1D functions (PDF(x) | integr(PDF(x) dx) = 1)
@@ -400,7 +427,7 @@ class randExtractor:
 			rand = np.random.random(np.shape(offsets))
 			x = interp(rand)
 			return offsets + x
-		return get_x
+		return randExtractor(get_x)
 	@staticmethod
 	def cellDistributionFromPDF_ND(pdf, ranges, steps):
 		'''
@@ -427,17 +454,14 @@ class randExtractor:
 			cellSizes = meshed_grids[indexes + 1] - cells
 			cell += cellSize * (np.random.random(len(ranges)) * cellSizes)
 			return offset + cell
-		return getValue
+		return randExtractor(getValue)
 
 	@staticmethod
 	def randomLosts(lostProbability):
 		def removeLost(data):
 			mask = np.random.rand(data.shape[0]) > lostProbability
 			return data[mask]
-		return removeLost
-
-	def __call__(self):
-		return self.distribFun(np.random.random(self.n))
+		return randExtractor(removeLost)
 
 
 if __name__ == '__main__':
@@ -494,8 +518,32 @@ if __name__ == '__main__':
 	# def f11(x,t):
 	# 	return np.abs((x-t)**2)
 	# f=randExtractor.distribFunFromPDF_1D_1D(f11,[0,1],.05,[0,1],.01)
-	# f11=lambda r,z:blur(r,z, 18534469.932683144, 6.259389157206513, 0.0255, 0.0001, 0.0153)
-	# plot2D_function(f11, np.array([0,1])*.02, np.array([-1,1])*1, 100, 100)
+	waist = 1e-3 
+	power = 10e-3
+
+	dt = 5e-9
+	detuning = 0#-5.5*trajlib.MHz
+	Lambda = 399e-9
+	k = 2*np.pi/Lambda
+	tweezerPower = 10e-3
+	E0 = np.sqrt(tweezerPower*753.4606273337396)
+	effectiveFocalLength = 25.5e-3
+	tweezerWaist = 1e-4
+	objective_Ray = 15.3e-3
+
+	# startPositions, directions = exp.getScatteredPhotons()
+	# # G = randExtractor.distribFunFromPDF_2D(lambda x,y: gauss(x, y,1,0,1e-8), [[-1e-9,1e-9]]*2, [5e-11]*2)
+	#'''
+	M = 8
+	finalPixelSize = 4.6e-6
+	finalNOfPixels = 40
+	finalCameraSize = finalNOfPixels * finalPixelSize
+	initialCameraSize = finalCameraSize / M#if we considered all the pixels, the camera size should be == 2*lensRadius = 32e-3 m
+	initialPixelSize = finalPixelSize / M
+	lensPosition = effectiveFocalLength
+	lensRadius = 16e-3
+	f11=lambda r,z:blur(r,z, k, E0, lensPosition, tweezerWaist, lensRadius)
+	plot2D_function(f11, [-0, lensRadius/100], [-50.1/k, 50/k], 50, 50)
 
 	# f=randExtractor.distribFunFromPDF_1D_1D(f11,np.array([0,1])*.02, 0.0005, np.array([-1,1])*1, 0.01)
 	# # # f(0,np.repeat(0.5,3))
@@ -508,13 +556,13 @@ if __name__ == '__main__':
 	# plt.scatter(t,x, alpha=.03)
 	# #"""
 	# plt.show()
-	def f2(x,y):
-		b = np.logical_and(x<=0, np.logical_and(x >= -1, np.logical_and(y<=1, y>=-1)))
-		return b.astype(float)
-	f=randExtractor.cellDistributionFromPDF_ND(f2,[[-5,5],[-5,5]],[1,1])
+	# def f2(x,y):
+	# 	b = np.logical_and(x<=0, np.logical_and(x >= -1, np.logical_and(y<=1, y>=-1)))
+	# 	return b.astype(float)
+	# f=randExtractor.cellDistributionFromPDF_ND(f2,[[-5,5],[-5,5]],[1,1])
 	
-	t=np.random.random(10000)
-	x=f(np.zeros((10000,2)))
-	plt.scatter(x[0],x[1], alpha=.03)
-	plt.show()
+	# t=np.random.random(10000)
+	# x=f(np.zeros((10000,2)))
+	# plt.scatter(x[0],x[1], alpha=.03)
+	# plt.show()
 	pass

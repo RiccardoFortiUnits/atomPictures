@@ -982,7 +982,7 @@ initializeSpontaneousEmission_qPolarization()
 def qPolarizationAnglePDF(theta):
         return 3+np.cos(2*theta)
 
-qPolarizationExtractor = randExtractor.distribFunFromPDF_1D(qPolarizationAnglePDF, (0, np.pi), 200)
+qPolarizationExtractor = randExtractor.distribFunFromPDF_1D(qPolarizationAnglePDF, (-np.pi/2, np.pi/2), np.pi/200)
 def SpontaneousEmission_qPolarization (wavelength,m):
     """
     Emit a photon of given wavelength in a random direction
@@ -992,9 +992,9 @@ def SpontaneousEmission_qPolarization (wavelength,m):
     k = np.zeros(3)
     theta = qPolarizationExtractor(0)
     phi = np.random.uniform(0,2*np.pi)
-    k[0] = kmod*np.cos(phi)*np.sin(theta)
-    k[2] = kmod*np.sin(phi)*np.sin(theta)
-    k[1] = kmod*np.cos(theta)
+    k[0] = kmod*np.cos(phi)*np.cos(theta)
+    k[2] = kmod*np.sin(phi)*np.cos(theta)
+    k[1] = kmod*np.sin(theta)
     # if np.random.random_integers(0,1)==0:
     #     k=np.array([-1,0,0])
     # else:
@@ -1052,6 +1052,13 @@ class experiment:
             atom.reset()
         for laser in self.lasers:
             laser.reset()
+
+    @property
+    def initialAtomPositions(self):
+        l = np.zeros((len(self.atoms), 3))
+        for i in range(len(self.atoms)):
+            l[i] = self.atoms[i].initialPosition
+        return l
     def run(self, time = 1e-6, stepTime = 1e-9):
         ZeemanShift = 0#for now, let's not use this
         times = np.arange(0, time, stepTime)
@@ -1168,7 +1175,17 @@ class experiment:
                 receivedPhotons[i] = len(photons)
             self.reset()
         return receivedPhotons
-
+    def repeatRun(self, time = 1e-6, stepTime = 1e-9, nOfRuns = 100, updateFunction = None):
+        '''
+        updateFunction should have the input arguments index, experiment
+        '''
+        for i in range(nOfRuns):
+            print(i)
+            self.run(time, stepTime)
+            if updateFunction is not None:
+                updateFunction(index = i, experiment = self)
+            self.reset()
+        
     def plotTrajectoriesAndCameraAcquisition(self, camera : Camera):
         hitPositions, hitIdx = camera.hitLens(self.lastPositons[self.lastHits[0], self.lastHits[1]], self.lastGeneratedPhotons, returnHitIndexes=True)
         hitCamera = np.zeros((len(self.lastHits[0])), dtype=bool)
