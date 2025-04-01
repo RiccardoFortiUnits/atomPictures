@@ -9,11 +9,37 @@ import h5py
 import os
 from scipy import integrate
 from functools import partial
+import inspect
 
-def plot2D_function(function, x_range, y_range, resolution_x, resolution_y):
+def plot2D_function(function, x_range, y_range, resolution_x, resolution_y, figureTitle=""):
 	X,Y=np.meshgrid(np.linspace(x_range[0],x_range[1],resolution_x),np.linspace(y_range[0],y_range[1],resolution_y))
-	Z=function(X,Y)
+	signature = inspect.signature(function)
+	if len(signature.parameters) == 1:
+		Z=function(np.stack((X,Y), axis= -1))
+	else:
+		Z=function(X,Y)
+	if Z.dtype == np.complex128:
+		plt.figure(figureTitle + " (abs value)")
+		plt.imshow(np.abs(Z.T), extent=(y_range[0], y_range[1], x_range[0], x_range[1]), origin='lower', cmap='viridis', aspect='auto')
+		plt.show()
+		Z=np.angle(Z)
+		figureTitle = f"{figureTitle} (angle)"
+		
+	plt.figure(figureTitle)
 	plt.imshow(Z.T, extent=(y_range[0], y_range[1], x_range[0], x_range[1]), origin='lower', cmap='viridis', aspect='auto')
+	plt.show()
+def plot1D_function(function, range, resolution, figureTitle=""):
+	x = np.linspace(range[0],range[1],resolution)
+	y=function(x)
+	if y.dtype == np.complex128:
+		plt.figure(figureTitle + " (abs value)")
+		plt.plot(x,np.abs(y))
+		plt.show()
+		y=np.real(y)
+		figureTitle = f"{figureTitle} (angle)"
+		
+	plt.figure(figureTitle)
+	plt.plot(x,y)
 	plt.show()
 def ainy(u, v, r=1):
 	# Calculate the 2D Fourier transform
@@ -32,7 +58,7 @@ def blur(r,z, k,E0,f,w,R):
 	usedR = min(R, 4*w)
 	x = np.repeat(np.linspace(0,usedR,1000)[None,:],len(r), axis=0)
 	integral = np.sum(functionToIntegrate(x, r[:,None],z[:,None]), axis=1) * usedR/x.shape[1]
-	retVal = np.abs(E0 * k / (2 * np.pi * f) * np.exp(-1j * k * z) * integral)
+	retVal = np.abs(E0 * k / (2 * np.pi * f) * np.exp(-1j * k * z) * integral)**2
 	return retVal.reshape(s)
 
 def CoordinateChange_extended(data_tuple, x0, y0, z0, angleXY, angleXZ, angleYZ):
@@ -73,6 +99,32 @@ def reverseCoordinateChange(data_tuple, x0, y0, z0, angleXY, angleXZ, angleYZ):
 	x_Prime = x_temp * np.cos(angleXY) - y_temp * np.sin(angleXY)
 
 	return x_Prime + x0, y_Prime + y0, z_Prime + z0
+
+
+def save_h5_image(image, **metadata):	
+	with h5py.File(image, 'w') as f:
+		f.create_dataset('image', data=image)
+		f.attrs.update(metadata)
+
+def getImagesFrom_h5_files(folderPath):
+	'''
+		gets an image that is the average of all the images contained in folderPath.
+		also returns a dictionary {fileName:metadata} of all the metadata contained in the files
+	'''
+	files = [f for f in os.listdir(folderPath) if f.endswith('.h5')]
+	if not files:
+		raise ValueError("No h5 files found in the specified folder.")
+
+	images = []
+	metadata = {}
+
+	for file in files:
+		with h5py.File(os.path.join(folderPath, file), 'r') as f:
+			image = np.array(f['image'])
+			images.append(image)
+			metadata[file] = dict(f.attrs)
+
+	return images, metadata
 
 '''---------------------------------------------------------------------------------'''
 
@@ -195,6 +247,19 @@ class cMosGrid(pixelGrid):
 		return pixels
 
 		
+class refreshing_cMosGrid(cMosGrid):
+	'''
+	normal cMosGrids decide the pixel noise when they are initialized (more accurately, they decide which pixels of the real data set to copy),
+	but if you want to have a wider range of possible images, it's better to "change" the pixels each time, otherwise you might have bias due 
+	to a "bad" pixel always being in a certain position, or other similar problems.
+	This subclass just gets random pixel values for each imaging
+	'''	
+	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
+		super().__init__(xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart, imageSizes)
+		self.pixelNoises = self.pixelNoises.flatten()
+		
+	def addNoise(self):
+		self.pixels += np.random.choice(self.pixelNoises, self.pixels.shape, )
 
 
 class Camera:
@@ -272,15 +337,14 @@ class Camera:
 			plt.title('2D Function Plot')
 			plt.show()
 		if saveToFile is not None:
-			with h5py.File(saveToFile, 'w') as f:
-				f.create_dataset('image', data=image)
-				f.attrs['initial number of photons'] = initialNOfPhotons
-				f.attrs['number of photons hitting lens'] = nOfPhotonHittingLens
-				for i in range(len(self.pixelGrids)):
-					f.attrs[f'number of photons hitting grid {i}'] = nOfPhotonsHittingGrid[i]
-					for key, val in extraGridInfos[i].items():
-						f.attrs[f'grid {i}, {key}'] = val
-				f.attrs.update(additionalAttributesToSave)
+			additionalAttributesToSave['initial number of photons'] = initialNOfPhotons
+			additionalAttributesToSave['number of photons hitting lens'] = nOfPhotonHittingLens
+			for i in range(len(self.pixelGrids)):
+				additionalAttributesToSave[f'number of photons hitting grid {i}'] = nOfPhotonsHittingGrid[i]
+				for key, val in extraGridInfos[i].items():
+					additionalAttributesToSave[f'grid {i}, {key}'] = val
+
+			save_h5_image(saveToFile, **additionalAttributesToSave)
 		return image
 
 
@@ -462,7 +526,6 @@ class randExtractor:
 			mask = np.random.rand(data.shape[0]) > lostProbability
 			return data[mask]
 		return randExtractor(removeLost)
-
 
 if __name__ == '__main__':
 

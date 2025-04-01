@@ -32,7 +32,7 @@ exp.add_laser(b1)
 
 ##stuff for the blur function
 tweezerLambda = 532e-9
-k = 2*np.pi/tweezerLambda#Lambda
+k = 2*np.pi/Lambda#tweezerLambda#Lambda
 tweezerPower = 10e-3
 E0 = genlib.I2E_0(tweezerPower)
 effectiveFocalLength = 25.5e-3
@@ -50,15 +50,15 @@ initialCameraSize = finalCameraSize / M#if we considered all the pixels, the cam
 initialPixelSize = finalPixelSize / M
 lensPosition = effectiveFocalLength
 lensRadius = objective_Ray#16e-3
-f11=lambda r,z:                                             blur(r,z - lensPosition,k,E0,effectiveFocalLength, tweezerWaist, objective_Ray)
-# plot2D_function(f11,                                                                                                                        [0,1e-2], [-1e-6+lensPosition,1e-6+lensPosition], 50, 100)
-G = randExtractor.distribFunFromradiusPDF_2D_1D(lambda r,z: blur(r,z - lensPosition,k,E0,effectiveFocalLength, tweezerWaist, objective_Ray), [0,initialCameraSize/2], 
+f11=lambda r,z:                                             blur(r,z - lensPosition,k,E0,effectiveFocalLength, waist, objective_Ray)
+# plot2D_function(f11,                                                                                                                        [0,initialPixelSize*10], [-1e-3+lensPosition,1e-3+lensPosition], 100, 50)
+G = randExtractor.distribFunFromradiusPDF_2D_1D(lambda r,z: blur(r,z - lensPosition,k,E0,effectiveFocalLength, waist, objective_Ray), [0,initialPixelSize*10], 
 												initialPixelSize/2, 
-												[-1e-6+lensPosition,1e-6+lensPosition], 1e-7)
+												[-1e-4+lensPosition,1e-4+lensPosition], 1e-6)
 # G = lambda x,*y:x
 magnificationGrid = pixelGrid(initialCameraSize,initialCameraSize,finalNOfPixels,finalNOfPixels, G, magnification=M)
 # quantumEfficiencyGrid = pixelGrid(4.6e-6,4.6e-6,100,100, randExtractor.randomLosts(0.1))
-quantumEfficiencyGrid = cMosGrid(finalCameraSize,finalCameraSize,finalNOfPixels,finalNOfPixels, randExtractor.randomLosts(0.1), "Orca_testing/shots/", imageStart = (10,10), imageSizes = (-10,-10))
+quantumEfficiencyGrid = refreshing_cMosGrid(finalCameraSize,finalCameraSize,finalNOfPixels,finalNOfPixels, randExtractor.randomLosts(0.1), "Orca_testing/shots/", imageStart = (10,10), imageSizes = (-10,-10))
 c = Camera(position=(0,0,lensPosition), 
 		   orientation=(0,-np.pi/2,0), 
 		   radius=lensRadius,
@@ -73,7 +73,7 @@ c = Camera(position=(25.5e-3,0,0),
 #'''
 positions = np.repeat(np.array([0,0,0])[None,:],10,axis=0)
 directions = np.repeat(np.array([0,0,1])[None,:],10,axis=0)
-c.takePicture(positions, directions, plot=True)
+# c.takePicture(positions, directions, plot=True)
 info = {
 	"initial atom positions" : exp.initialAtomPositions,
 	"non-magnified pixel side (m)" : initialPixelSize,
@@ -88,13 +88,13 @@ info = {
 	"tweezer laser wavelength" : tweezerLambda,
 }
 
-durations_us = [7,10,15,20]
+durations_us = [10,15,20]
 for duration_us in durations_us:
 	def update(index, experiment : trajlib.experiment):
 		startPositions, directions = experiment.getScatteredPhotons()
 		c.takePicture(startPositions, directions, plot=False, saveToFile=f"D:/simulationImages/{duration_us}us/image_{index}.h5", **info)
 
-	exp.repeatRun(duration_us * 1e-6, dt, 10, update)
+	exp.repeatRun(duration_us * 1e-6, dt, 1000, update)
 # c.pixelGrids = (magnificationGrid, quantumEfficiencyGrid)
 # image = c.takePicture(startPositions, directions, plot=True)
 # exp.plotTrajectoriesAndCameraAcquisition(c)
