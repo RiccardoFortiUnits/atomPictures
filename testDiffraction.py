@@ -118,7 +118,7 @@ def expandInFreeSpace(U0, xy0_ranges,z0=0, k=1):
 	returns the convolution U1(x1,y1,z1) of the field U0(x,y,z=z0) with h(x,y,z) to obtain the value of U1(x,y,z)
 	the integral is calculated in the specified ranges
 	'''
-	nOfSamplesPerDimension = 20
+	nOfSamplesPerDimension = 100
 	X,Y = np.meshgrid(*[np.linspace(min,max,nOfSamplesPerDimension) for min,max in xy0_ranges])
 	X=X.flatten()[None,:]
 	Y=Y.flatten()[None,:]
@@ -209,6 +209,7 @@ def U0(xyz,k):
 def U0_radial(rz,k):
 	r=np.linalg.norm(rz, axis=-1)
 	cosAlpha = rz[...,1]/r	
+	# return 1 * np.exp(1j*k*r)
 	return cosAlpha / r**2 * np.exp(1j*k*r)
 
 
@@ -236,7 +237,7 @@ def impulseExpansionInFreeSpace_radial(rz1, U0, rz0, k):
 	dz=rz1[...,1]-rz0[...,1]
 	r0=rz0[...,0]
 	r1=rz1[...,0]
-	return U0(rz0) * j0(k/dz * r0 * r1) * np.exp(.5j * k / dz* (r0**2 + r1**2))
+	return U0(rz0) * j0(k/dz * r0 * r1) * np.exp(1j*k*dz + .5j * k / dz* (r0**2 + r1**2))
 def expandInFreeSpace_radial(U0, max_r0,z0=0, k=1):
 	'''
 	returns the free space expansion U1(r,z1) of the field U0(r,z=z0). For cylindrical fields
@@ -251,7 +252,7 @@ def expandInFreeSpace_radial(U0, max_r0,z0=0, k=1):
 
 		integral = np.sum(R * allImpulseResponses, axis=1) * max_r0 / np.size(R)
 		dz=rz1[...,1]-z0
-		integral = k /(2*np.pi*dz) * integral[:,None] * np.exp(1j*k*dz)
+		integral = k /(2*np.pi*dz) * integral[:,None]
 		return np.reshape(integral, s[:-1])
 	return U1
 
@@ -300,18 +301,39 @@ def addStaticYZ(function, y, z):
 	def f(x):
 		return function(np.stack((x,y*np.ones(x.shape),z*np.ones(x.shape)),axis=-1))
 	return f
+
+'''does free space expansion work?'''
+
+lam=f0/3
+k=2*np.pi/lam
+z0=f0+50
+z1=z0+f0*5
+effectiveR_lens0 = R0*3#min(R0,8*(z_lens1-z_lens0)/(R0**2*k))
+U_effective = lambda rz:U0_radial(rz, k)# lambda rz:impulseExpansionInFreeSpace_radial(rz,lambda *x:1, np.zeros_like(rz), k)#U0_radial(rz, k)
+U_FreeSpace = expandInFreeSpace_radial(U_effective, effectiveR_lens0, z0, k)
+plot2D_function(U_effective, [0,effectiveR_lens0],[z0,z1],500,50, "U_effective")
+plot2D_function(U_FreeSpace, [0,effectiveR_lens0/100],[z0,z1],500,50, "U_FreeSpace")
+
+
+
+
+
 '''radial'''
-effectiveR_lens0 = R0/20#min(R0,8*(z_lens1-z_lens0)/(R0**2*k))
-effectiveR_lens1 = 2e-4#min(R1,200*(z_objective-z_lens1)/(R1**2*k))
-U_beforeLens0 = lambda rz:U0_radial(rz, k)
-# plot2D_function(U_beforeLens0, [0,effectiveR_lens0],[0,z_lens0],500,50, "U_beforeLens0")
-U_afterLens0 = passThroughLens_radial(U_beforeLens0, k, f0, R0)
-# plot2D_function(U_afterLens0, [0,effectiveR_lens0],[-effectiveR_lens0,effectiveR_lens0],50,50, "U_afterLens0")
-#let's calculate its values once and for all, so we won't re-calculate the integrals
-U_beforeLens1 = expandInFreeSpace_radial(U_afterLens0, effectiveR_lens0, z_lens0, k)
-plot2D_function(U_beforeLens1, [0,effectiveR_lens1],[z_lens0*1.01,z_lens1+f0*.5],500,50, "U_beforeLens1")
-U_afterLens1 = passThroughLens_radial(U_beforeLens1, k, f1, R1)
+# effectiveR_lens0 = R0/20#min(R0,8*(z_lens1-z_lens0)/(R0**2*k))
+# effectiveR_lens1 = 2e-4#min(R1,200*(z_objective-z_lens1)/(R1**2*k))
+# U_beforeLens0 = lambda rz:U0_radial(rz, k)
+# # plot2D_function(U_beforeLens0, [0,effectiveR_lens0],[0,z_lens0],500,50, "U_beforeLens0")
+# U_afterLens0 = passThroughLens_radial(U_beforeLens0, k, f0, R0)
+# # plot2D_function(U_afterLens0, [0,effectiveR_lens0],[-effectiveR_lens0,effectiveR_lens0],50,50, "U_afterLens0")
+# #let's calculate its values once and for all, so we won't re-calculate the integrals
+# U_beforeLens1 = expandInFreeSpace_radial(U_afterLens0, effectiveR_lens0, z_lens0, k)
+# plot2D_function(U_beforeLens1, [0,effectiveR_lens1],[z_lens0*1.01,z_lens1+f0*.5],500,50, "U_beforeLens1")
+# U_afterLens1 = passThroughLens_radial(U_beforeLens1, k, f1, R1)
 # plot2D_function(addStaticZ(U_afterLens1,z_lens1), [-effectiveR_lens1,effectiveR_lens1],[-effectiveR_lens1,effectiveR_lens1],50,50, "U_afterLens1")
+
+
+
+
 
 # U_objective = expandInFreeSpace(U_afterLens1, [[-effectiveR_lens1,effectiveR_lens1],[-effectiveR_lens1,effectiveR_lens1]], z_lens1, k)
 # plot2D_function(addStaticZ(U_objective,z_objective), [-effectiveR_lens1,effectiveR_lens1],[-effectiveR_lens1,effectiveR_lens1],50,50, "U_objective")

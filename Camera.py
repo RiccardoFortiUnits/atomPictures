@@ -35,7 +35,7 @@ def plot1D_function(function, range, resolution, figureTitle=""):
 		plt.figure(figureTitle + " (abs value)")
 		plt.plot(x,np.abs(y))
 		plt.show()
-		y=np.real(y)
+		y=np.angle(y)
 		figureTitle = f"{figureTitle} (angle)"
 		
 	plt.figure(figureTitle)
