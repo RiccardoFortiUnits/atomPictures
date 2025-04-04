@@ -29,33 +29,63 @@ def impulseExpansionInFreeSpace(xyz1, U0, xyz0, k):
 
 def boundingBox(map):
 	''' gets the index coordinates of a rectangle that includes all the elements of map that are different from 0'''
-	vals = np.where(map != 0)
+	vals = np.where(map)
 	minx=np.min(vals[1])
 	maxx=np.max(vals[1])
 	miny=np.min(vals[0])
 	maxy=np.max(vals[0])
 	return ((minx, maxx), (miny, maxy))
 
-def expandMap(map, realRanges, extensionMultiplier = 2, reductionadder = 1):
+def expandMap(map, maxExceptedValue, ranges, extensionMultiplier = 2, reductionadder = 1, reductionMultiplier = 20):
 	'''returns a new search range for the estimate of the acceptable ranges of a map,
 	so that the new map (generated with an external function that uses the new search range) 
 	should contains more (and hopefully all the acceptable region(s?) of the function... Sorry, 
 	I haven't explained myself... Oh well, hopefully I'll remember what this actually does'''
-	if np.max(map) == 0:#no valid pixel?
-		#Let's assume that there will be a valid value in the center, and just return the size of one pixel centered in the map
-		pixelHalfSizes = [(max-min)*reductionadder*.5/map.shape[i] for i, (min,max) in enumerate(realRanges)]
-		mapCenter = [(max+min)/2 for (min,max) in realRanges]
-		return ((mapCenter[0]-pixelHalfSizes[0],mapCenter[0]+pixelHalfSizes[0]),(mapCenter[1]-pixelHalfSizes[1],mapCenter[1]+pixelHalfSizes[1]))
+	mm = map < maxExceptedValue
+	minValues = [ranges[0][0], ranges[1][0]]
+	pixelSizes = [(max-min)/map.shape[i] for i, (min,max) in enumerate(ranges)]
+	if not np.any(mm):#no valid pixel?
+		# #Let's assume that there will be a valid value in the center, and just return the size of one pixel centered in the map
+		# pixelHalfSizes = [(max-min)*reductionadder*.5/map.shape[i] for i, (min,max) in enumerate(ranges)]
+		# mapCenter = [(max+min)/2 for (min,max) in ranges]
+		# return ((mapCenter[0]-pixelHalfSizes[0],mapCenter[0]+pixelHalfSizes[0]),(mapCenter[1]-pixelHalfSizes[1],mapCenter[1]+pixelHalfSizes[1]))
 		
-	((minx, maxx), (miny, maxy)) = boundingBox(map)
+		#Let's find an estimate for the minimum, and let's move the range there
+		axes=[0,1]
+		limits = [[0,len(map)-1], [0,len(map[0])-1]]
+		onAnyLimit=False
+		newCenters = []
+		localMins = np.unravel_index(np.argmin(np.where(np.isnan(map), np.inf, map)), map.shape)
+		localMins = [localMins[1],localMins[0]]
+		for min, axis, limit in zip(localMins, axes,limits):
+			onLimit = -1
+			for i, lim in enumerate(limit):
+				if min == lim:
+					onLimit = i
+			if onLimit != -1:
+				#let's move the range half a range to the direction of the mimimum
+				onAnyLimit = True
+				newCenters.append(map.shape[onLimit] * (onLimit))
+			else:
+				newCenters.append(min)
+			newCenters[-1] = newCenters[-1] * pixelSizes[axis] + minValues[axis]
+
+		if onAnyLimit:
+			#let's not reduce the size of the ranges. It's better to first have an estimate of the position of the mimimum, and then reduce the size to center it
+			newHalfSizes = [(max-min)*.5*extensionMultiplier for i, (min,max) in enumerate(ranges)]
+		else:
+			#we have the miminum inside the frame. Let's center it
+			newHalfSizes = [(max-min)*reductionMultiplier*.5/map.shape[i] for i, (min,max) in enumerate(ranges)]
+		return ((newCenters[0]-newHalfSizes[0],newCenters[0]+newHalfSizes[0]),(newCenters[1]-newHalfSizes[1],newCenters[1]+newHalfSizes[1]))
+
+		
+	((minx, maxx), (miny, maxy)) = boundingBox(mm)
 	centerX=(minx+maxx)/2
 	centerY=(miny+maxy)/2
 	indexes = [minx, maxx, miny, maxy]
 	signs = [-1,1,-1,1]
 	centers =[centerX,centerX,centerY,centerY]
 	limits = [0,len(map)-1,0,len(map[0])-1]
-	minValues = [realRanges[0][0], realRanges[1][0]]
-	pixelSizes = [(max-min)/map.shape[i] for i, (min,max) in enumerate(realRanges)]
 	minValues = [minValues[0],minValues[0],minValues[1],minValues[1]]
 	pixelSizes = [pixelSizes[0],pixelSizes[0],pixelSizes[1],pixelSizes[1]]
 	newValues = []
@@ -67,15 +97,16 @@ def expandMap(map, realRanges, extensionMultiplier = 2, reductionadder = 1):
 		newValues.append(min + pixelSize * newIndex)
 	return ((newValues[0],newValues[1]),(newValues[2],newValues[3]))
 		
-def isMapOk(map,fillRatio):
-	if np.max(map) == 0:
+def isMapOk(map, maxExceptedValue,fillRatio):
+	mm = map < maxExceptedValue
+	if not np.any(mm):
 		return False
-	((minx, maxx), (miny, maxy)) = boundingBox(map)
+	((minx, maxx), (miny, maxy)) = boundingBox(mm)
 	limits = np.array([0,len(map)-1,0,len(map[0])-1])
 	indexes = np.array([minx, maxx, miny, maxy])
 	if np.any(limits==indexes):
 		return False
-	validRatio = np.sum(map) / map.size
+	validRatio = np.count_nonzero(mm) / map.size
 	return validRatio > fillRatio
 
 
@@ -103,11 +134,24 @@ def impulseExpansionInFreeSpace_separated(xyz1, U0, xyz0, k):
 	r=ru*rh
 	a=au+ah
 	grad_x, grad_y = np.gradient(a, axis=(0, 1))
-	gradLim =np.pi/8
-	grad = np.sqrt(grad_x**2+grad_y**2)
-	plt.imshow(grad // gradLim)
-	plt.show()
-	return r * np.exp(1j * a), (np.abs(grad) < (gradLim)).astype(int)
+	grad = np.sqrt(grad_x**2 + grad_y**2)
+	# Estimate the position of the local minimum using the gradient
+	# grad_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+	# grad_direction_x = -grad_x / (grad_magnitude + 1e-10)  # Avoid division by zero
+	# grad_direction_y = -grad_y / (grad_magnitude + 1e-10)
+
+	# # Compute a weighted average of the gradient directions to estimate the local minimum
+	# weights = 1 / (grad_magnitude + 1e-10)  # Higher weights for smaller gradients
+	# estimated_min_x = np.sum(grad_direction_x * weights) / np.sum(weights)
+	# estimated_min_y = np.sum(grad_direction_y * weights) / np.sum(weights)
+
+	# # Add the estimated offset to the grid center
+	# grid_center_x = xyz0[..., 0].mean()
+	# grid_center_y = xyz0[..., 1].mean()
+	# estimated_min_position = (grid_center_x + estimated_min_x, grid_center_y + estimated_min_y)
+	# print("Estimated position of local minimum:", estimated_min_position)
+	a = np.nan_to_num(a, nan=0)
+	return r * np.exp(1j * a), grad
 
 def expandInFreeSpace_separated(U0, xy0_ranges,z0=0, k=1):
 	'''
@@ -130,18 +174,28 @@ def expandInFreeSpace_separated(U0, xy0_ranges,z0=0, k=1):
 		nonlocal xyz0, scale, xy0_ranges
 		newRange = xy0_ranges
 		integral = np.zeros(xyz1.shape[:-1], dtype=np.complex128)
+		plotGradiens=False
+		gradLim =np.pi/4
 		for i in range(len(xyz1)):
 			for j in alternateRange(len(xyz1[i]),i):
 				if i==1:
 					i += 0
-				repeats = 10
+				newRange = xy0_ranges
+				xyz0 = get_xyz0(newRange)
+				repeats = 20
 				# newRange = ((newRange[0][0]-xyz1[i, j, 0],newRange[0][1]-xyz1[i, j, 0]),(newRange[1][0]-xyz1[i, j, 1],newRange[1][1]-xyz1[i, j, 1]))
 				# newRange = ((newRange[0][0]+xyz1[i, j, 0],newRange[0][1]+xyz1[i, j, 0]),(newRange[1][0]+xyz1[i, j, 1],newRange[1][1]+xyz1[i, j, 1]))
 				while repeats>0:
 					allImpulseResponses, validSections = impulseExpansionInFreeSpace_separated(xyz1[i, j, :], U0, xyz0, k)
-					
-					if not isMapOk(validSections, 0.3):
-						newRange = expandMap(validSections, newRange, 1.1,4)
+					if plotGradiens:
+						plt.imshow(validSections//gradLim)
+						'''
+						plotGradiens=True
+						plt.imshow(validSections/gradLim)
+						'''
+						plt.show()
+					if not isMapOk(validSections, gradLim, 0.2):
+						newRange = expandMap(validSections, gradLim, newRange, 1.3,20)
 						xyz0 = get_xyz0(newRange)
 					else:
 						break
@@ -150,7 +204,13 @@ def expandInFreeSpace_separated(U0, xy0_ranges,z0=0, k=1):
 				# newRange = ((newRange[0][0]-xyz1[i, j, 0],newRange[0][1]-xyz1[i, j, 0]),(newRange[1][0]-xyz1[i, j, 1],newRange[1][1]-xyz1[i, j, 1]))
 				# newRange = ((newRange[0][0]+xyz1[i, j, 0],newRange[0][1]+xyz1[i, j, 0]),(newRange[1][0]+xyz1[i, j, 1],newRange[1][1]+xyz1[i, j, 1]))
 				if repeats == 0:
-					print("failed to converge")
+					print(f"failed to converge at point ({i}, {j})")
+					# newRange = xy0_ranges
+					# xyz0 = get_xyz0(newRange)
+					# allImpulseResponses, validSections = impulseExpansionInFreeSpace_separated(xyz1[i, j, :], U0, xyz0, k)
+					# validSections = (np.logical_not(np.isnan(validSections))).astype(float)
+				
+				validSections = (validSections < gradLim).astype(float)
 				integral[i][j] = np.sum(allImpulseResponses * validSections) / gridSize * np.prod(np.array([(max-min)*scale for min,max in newRange]))
 
 		return integral * k/(2j*np.pi)
@@ -184,8 +244,11 @@ def passThroughLens_separated(U0, k,f,R):
 	def U1(xy):
 		ru, au = U0(xy)
 		al = -.5*k/f*(xy[...,0]**2 + xy[...,1]**2)
-		rl = (xy[...,0]**2 + xy[...,1]**2 < R**2).astype(float)
-		return ru*rl, au+al
+		outside = (xy[...,0]**2 + xy[...,1]**2 > R**2)
+		a = (au+al)
+		a[outside] = np.nan
+		ru[outside] = 0
+		return ru, a
 	return U1
 
 def passThroughLens(U0, k,f,R):
@@ -250,7 +313,7 @@ k=2*np.pi/lam
 z0=f0+50
 z1=z0+f1
 z2=z1+f1
-effectiveR_lens0=R0/10
+effectiveR_lens0=R0
 effectiveR_lens1=R1
 
 def U0_separated(k):
@@ -269,8 +332,12 @@ U_afterLens0=passThroughLens_separated(U0, k, f0, R0)
 
 U_beforeLens1=expandInFreeSpace_separated(U_afterLens0, 
 							[[-effectiveR_lens0,effectiveR_lens0],[-effectiveR_lens0,effectiveR_lens0]], z0, k)
-plot2D_function(addStaticY(U_beforeLens1,0), [-effectiveR_lens0,effectiveR_lens0],[z0+f0*.9,z0+f0*1.1],50,50, "U_beforeLens1_xz")
-# plot2D_function(addStaticZ(U_beforeLens1,z0), [-effectiveR_lens0,effectiveR_lens0],[-effectiveR_lens0,effectiveR_lens0],50,50, "U_beforeLens1_xy")
+# plot2D_function(addStaticY(U_beforeLens1,0), [0,effectiveR_lens0*.1],[z0+f0*.1,z0+f0*1.9],50,50, "U_beforeLens1_xz")
+# plot1D_function(addStaticYZ(U_beforeLens1,0,z0+f0), [0,effectiveR_lens0*.1],100, "U_beforeLens1_xz")
+# plot2D_function(addStaticZ(U_beforeLens1,z0+f0), [-0,1e-5],[-0,1e-5],50,50, "U_beforeLens1_xy")
+plot2D_function(addStaticZ(U_beforeLens1,z0+f0*1.0002), [-1e-7,1e-7],[-1e-7,1e-7],50,50, "U_beforeLens1_xy")
+
+a=0
 # U_afterLens1=passThroughLens_separated(U_beforeLens1, k, f1, R1)
 
 # U_objective = expandInFreeSpace_separated(U_afterLens1, 
