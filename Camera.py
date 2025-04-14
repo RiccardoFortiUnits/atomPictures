@@ -10,17 +10,10 @@ import os
 from scipy import integrate
 from functools import partial
 import inspect
-
-def plot2D_function(function, x_range, y_range, resolution_x, resolution_y, figureTitle=""):
-	X,Y=np.meshgrid(np.linspace(x_range[0],x_range[1],resolution_x),np.linspace(y_range[0],y_range[1],resolution_y))
-	signature = inspect.signature(function)
-	if len(signature.parameters) == 1:
-		Z=function(np.stack((X,Y), axis= -1))
-	else:
-		Z=function(X,Y)
+def plot2D(Z, x_range, y_range, figureTitle=""):
 	if Z.dtype == np.complex128:
 		plt.figure(figureTitle + " (abs value)")
-		plt.imshow(np.abs(Z.T), extent=(y_range[0], y_range[1], x_range[0], x_range[1]), origin='lower', cmap='viridis', aspect='auto')
+		plt.imshow((np.abs(Z.T)), extent=(y_range[0], y_range[1], x_range[0], x_range[1]), origin='lower', cmap='viridis', aspect='auto')
 		plt.show()
 		Z=np.angle(Z)
 		figureTitle = f"{figureTitle} (angle)"
@@ -28,6 +21,15 @@ def plot2D_function(function, x_range, y_range, resolution_x, resolution_y, figu
 	plt.figure(figureTitle)
 	plt.imshow(Z.T, extent=(y_range[0], y_range[1], x_range[0], x_range[1]), origin='lower', cmap='viridis', aspect='auto')
 	plt.show()
+def plot2D_function(function, x_range, y_range, resolution_x, resolution_y, figureTitle=""):
+	X,Y=np.meshgrid(np.linspace(x_range[0],x_range[1],resolution_x),np.linspace(y_range[0],y_range[1],resolution_y))
+	signature = inspect.signature(function)
+	if len(signature.parameters) == 1:
+		Z=function(np.stack((X,Y), axis= -1))
+	else:
+		Z=function(X,Y)
+	plot2D(Z, x_range, y_range, figureTitle)
+
 def plot1D_function(function, range, resolution, figureTitle=""):
 	x = np.linspace(range[0],range[1],resolution)
 	y=function(x)
@@ -101,11 +103,23 @@ def reverseCoordinateChange(data_tuple, x0, y0, z0, angleXY, angleXZ, angleYZ):
 	return x_Prime + x0, y_Prime + y0, z_Prime + z0
 
 
-def save_h5_image(image, **metadata):	
-	with h5py.File(image, 'w') as f:
+def save_h5_image(imageName, image, **metadata):	
+	with h5py.File(imageName, 'w') as f:
 		f.create_dataset('image', data=image)
 		f.attrs.update(metadata)
 
+def load_h5_image(path, returnMetadata = False):
+	'''
+		gets an image that is the average of all the images contained in folderPath.
+		also returns a dictionary {fileName:metadata} of all the metadata contained in the files
+	'''
+	with h5py.File(path, 'r') as f:
+		image = np.array(f['image'])
+		if returnMetadata:
+			metadata = dict(f.attrs)
+			return image, metadata
+
+	return image
 def getImagesFrom_h5_files(folderPath):
 	'''
 		gets an image that is the average of all the images contained in folderPath.
@@ -344,7 +358,7 @@ class Camera:
 				for key, val in extraGridInfos[i].items():
 					additionalAttributesToSave[f'grid {i}, {key}'] = val
 
-			save_h5_image(saveToFile, **additionalAttributesToSave)
+			save_h5_image(saveToFile, image, **additionalAttributesToSave)
 		return image
 
 

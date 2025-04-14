@@ -6,6 +6,7 @@ from scipy.stats import poisson
 from scipy.optimize import curve_fit
 # import Simulations_Libraries.general_library as genlib
 from scipy.interpolate import RegularGridInterpolator
+from numpy.fft import fft2, fftshift
 
 
 def h(xyz, k):
@@ -23,7 +24,13 @@ def hreal(xyz,k):
 
 def h_separated(xyz, k):
 	return k/(2j*np.pi*xyz[...,2]), k*xyz[...,2] + .5*k/xyz[...,2]*(xyz[...,0]**2+xyz[...,1]**2)
-
+def hreal_separated(xyz,k):
+	'''
+	free space impulse response function without approximation
+	'''
+	r=np.linalg.norm(xyz,axis=-1)
+	cosTheta=xyz[...,2]/r
+	return cosTheta/r, k*r
 def impulseExpansionInFreeSpace(xyz1, U0, xyz0, k):
 	return U0(xyz0) * h(xyz1-xyz0, k)
 
@@ -202,6 +209,12 @@ def impulseExpansionInFreeSpace_separated(xyz1, U0, xyz0, k):
 	ru, au = U0(xyz0)
 	r=ru*rh
 	a=au+ah
+	return r, a
+def impulseExpansionInFreeSpace_separatedAndWithValidRange(xyz1, U0, xyz0, k):
+	rh, ah = h_separated(xyz1-xyz0, k)
+	ru, au = U0(xyz0)
+	r=ru*rh
+	a=au+ah
 	grad_x, grad_y = np.gradient(a, axis=(0, 1))
 	grad = np.sqrt(grad_x**2 + grad_y**2)
 	# Estimate the position of the local minimum using the gradient
@@ -222,7 +235,59 @@ def impulseExpansionInFreeSpace_separated(xyz1, U0, xyz0, k):
 	a = np.nan_to_num(a, nan=0)
 	return r * np.exp(1j * a), grad
 
+from testDiffraction_thirdAttempt import mappedFunction
+
 def expandInFreeSpace_separated(U0, xy0_ranges,z0=0, k=1):
+	'''
+	returns the convolution U1(x1,y1,z1) of the field U0(x,y,z=z0) with h(x,y,z) to obtain the value of U1(x,y,z)
+	the integral is calculated in the specified ranges
+	'''
+	nOfSamplesPerDimension = 200
+	nOfSamplesForMapSearch = 50
+	def get_xyz0(ranges, sizes = nOfSamplesForMapSearch):
+		X,Y = np.meshgrid(*[np.linspace(min,max,sizes)for (min,max) in ranges])
+		Z=z0 * np.ones_like(X)
+		return np.stack((X,Y,Z), axis=2)
+	def alternateRange(l,i):
+		if i%2==0:
+			return range(l)
+		return range(l-1,-1,-1)
+	scale=1
+	xyz0 = get_xyz0(xy0_ranges)
+	def U1(xyz1):
+		if len(xyz1.shape) == 2:#list of points instead of a grid of points?
+			xyz1 = np.reshape(xyz1, (xyz1.shape[0],1,xyz1.shape[1]))
+		nonlocal xyz0, scale, xy0_ranges
+		integral = np.zeros(xyz1.shape[:-1], dtype=np.complex128)
+		startCenter, startSize = mappedFunction.rangesToCenterAndSize(xy0_ranges)
+		for i in range(len(xyz1)):
+			print(i)
+			for j in alternateRange(len(xyz1[i]),i):
+				if j==7:
+					i += 0
+
+				def getOnlyAngle(xy0):
+					xyz0 = np.concatenate((xy0, z0*np.ones(xy0.shape[:-1])[...,None]), axis = -1)
+					_, angle = impulseExpansionInFreeSpace_separated(xyz1[i, j, :], U0, xyz0, k)
+					return angle
+				def getImpulseExpansion(xy0):
+					xyz0 = np.concatenate((xy0, z0*np.ones(xy0.shape[:-1])[...,None]), axis = -1)
+					ray, angle = impulseExpansionInFreeSpace_separated(xyz1[i, j, :], U0, xyz0, k)
+					angle = np.nan_to_num(angle, nan=0)
+					return ray * np.exp(1j * angle)
+				
+				startMap = mappedFunction(getOnlyAngle, startCenter, startSize, np.repeat(nOfSamplesForMapSearch,2))
+				zoomedMaps = startMap.getZoomedFlatSections(np.pi*4,.3)
+				integ = 0
+				for map in zoomedMaps:
+					map.f = getImpulseExpansion
+					map.resolution = np.repeat(nOfSamplesPerDimension,2)
+					integ += map.integral()
+				integral[i][j] = integ
+		return integral * k/(2j*np.pi)
+	return U1
+
+def expandInFreeSpace_separated_old(U0, xy0_ranges,z0=0, k=1):
 	'''
 	returns the convolution U1(x1,y1,z1) of the field U0(x,y,z=z0) with h(x,y,z) to obtain the value of U1(x,y,z)
 	the integral is calculated in the specified ranges
@@ -250,7 +315,7 @@ def expandInFreeSpace_separated(U0, xy0_ranges,z0=0, k=1):
 		gradLim =np.pi/2
 		for i in range(len(xyz1)):
 			for j in alternateRange(len(xyz1[i]),i):
-				if i==5 and j==9:
+				if i==2 and j==9:
 					i += 0
 				newRange = xy0_ranges
 				xyz0 = get_xyz0(newRange)
@@ -397,13 +462,13 @@ def gridFunction_separated(startingFunction, ranges, z, nOfValuesPerDimension = 
 
 f0 = 25.5e-3
 pow = 1
-R0 = 10e-3
+R0 = 16e-3
 f1 = 200e-3
 R1 = 27e-3
 lam = 399e-9#1e-6#f0/3#399e-9
 k=2*np.pi/lam
 
-z0=f0+50#+3e-6
+z0=0#f0
 z1=z0+f1
 z2=z1+f1
 effectiveR_lens0=R0
@@ -413,30 +478,78 @@ def U0_separated(k):
 	def U0(xyz):
 		r=np.linalg.norm(xyz, axis=-1)
 		cosAlpha = xyz[...,2]/r	
-		return cosAlpha / r**2, k*r
+		return cosAlpha / r, k*r
 	return U0
 
-def dipoleField_separated(xyz, k):
-	r=np.linalg.norm(xyz, axis=-1)
-	theta = np.arcsin(xyz[...,1]/r)
-	cosAlpha = xyz[...,2]/r
-	return (1+np.cos(2*theta))*cosAlpha / r**2, k*r
+def dipoleField_separated(k):
+	def U0(xyz):
+		r=np.linalg.norm(xyz, axis=-1)
+		theta = np.arcsin(xyz[...,1]/r)
+		cosAlpha = xyz[...,2]/r
+		return (1+np.cos(2*theta))*cosAlpha / r, k*r
+	return U0
 
-U0=U0_separated(k)
-U_afterLens0=passThroughLens_separated(U0, k, f0, R0)
-# plot2D_function(addStaticY(toComplex(U0),0), [-effectiveR_lens0,effectiveR_lens0],[0,z0],50,50, "U_beforeLens1")
-# plot2D_function(addStaticZ(toComplex(U_afterLens0),z0), [-effectiveR_lens0,effectiveR_lens0],[-effectiveR_lens0,effectiveR_lens0],50,50, "U_afterLens0")
-# U_afterLens=U0#lambda xyz:impulseExpansionInFreeSpace_separated(xyz,U0, np.array([0,0,0]), k)
+def gaussian_beam_separated(w0, k):
+	"""
+	gaussian beam propagating in axis z and focus at z=0
+	"""
+	lambda_ =  2 * np.pi / k
+	zR = np.pi * w0**2 / lambda_
+	def U0(xyz):
+		r = np.linalg.norm(xyz[...,:2], axis=-1)
+		z = xyz[...,2]
+		wz = w0 * np.sqrt(1 + (z / zR)**2)
+		Rz = z * (1 + (zR / z)**2)
+		phi = np.arctan(z / zR)
 
-U_beforeLens1=expandInFreeSpace_separated(U_afterLens0, 
-							[[-effectiveR_lens0,effectiveR_lens0],[-effectiveR_lens0,effectiveR_lens0]], z0, k)
-# plot2D_function(addStaticY(U_beforeLens1,0), [0,effectiveR_lens0*.1],[z0+f0*.1,z0+f0*1.9],50,50, "U_beforeLens1_xz")
-# plot1D_function(addStaticYZ(U_beforeLens1,0,z0+f0+lam*50), [0,1e-5],100, "U_beforeLens1_xz")
-# plot1D_function(addStaticYZ(U_beforeLens1,0,z0+f0), [0,1e-5],100, "U_beforeLens1_xz")
-# plot2D_function(addStaticZ(U_beforeLens1,z0+f0), [-0,1e-5],[-0,1e-5],50,50, "U_beforeLens1_xy")
-plot2D_function(addStaticZ(U_beforeLens1,z1), [-0,R0*.6],[-0,R0*.6],10,10, "U_beforeLens1_xy")
+		amplitude = (w0 / wz) * np.exp(-(r**2) / wz**2)
+		phase = -(k * z + k * (r**2) / (2 * Rz) - phi)
+		phase = np.nan_to_num(phase, nan=0)
+		return amplitude, phase
+	return U0
 
-a=0
+'''------------------------------------------------------------------------------------------'''
+# U0=dipoleField_separated(R0/10,k)
+# U_afterLens0=passThroughLens_separated(U0, k, f0, R0)
+# # plot2D_function(addStaticY(toComplex(U0),0), [-effectiveR_lens0,effectiveR_lens0],[0,z0],50,50, "U_beforeLens1")
+# # plot2D_function(addStaticZ(toComplex(U_afterLens0),z0), [-effectiveR_lens0,effectiveR_lens0],[-effectiveR_lens0,effectiveR_lens0],50,50, "U_afterLens0")
+# # U_afterLens=U0#lambda xyz:impulseExpansionInFreeSpace_separated(xyz,U0, np.array([0,0,0]), k)
+
+# U_beforeLens1=expandInFreeSpace_separated(U_afterLens0, 
+# 							[[-effectiveR_lens0,effectiveR_lens0],[-effectiveR_lens0,effectiveR_lens0]], z0, k)
+# plot2D_function(addStaticY(U_beforeLens1,0), [0,R0],[z0+f1*.5,z0+f1*1.5],50,50, "U_beforeLens1_xz")
+# # plot1D_function(addStaticYZ(U_beforeLens1,0,z0+f0+lam*50), [0,1e-5],100, "U_beforeLens1_xz")
+# # plot1D_function(addStaticYZ(U_beforeLens1,0,z1), [0,R0*.001],100, "U_beforeLens1_xz")
+# # plot2D_function(addStaticZ(U_beforeLens1,z1), [-0,.006],[-0,.006],20,20, "U_beforeLens1_xy")
+# # plot2D_function(addStaticZ(U_beforeLens1,z1), [-0,R0*.36],[-0,R0*.36],100,100, "U_beforeLens1_xy")
+# # plot2D_function(addStaticZ(U_beforeLens1,z1), [-0,R0*1],[-0,R0*1],100,10, "U_beforeLens1_xy")
+
+
+'''------------------------------save images------------------------------------------------------------'''
+# for i in range(4):
+# 	z0=f0-5e-8*(i)
+# 	z1=z0+f1
+# 	z2=z1+f1
+# 	U_beforeLens0 = dipoleField_separated(k)
+# 	U_afterLens0 = passThroughLens_separated(U_beforeLens0, k, f0, R0)
+# 	U_beforeLens1 = expandInFreeSpace_separated(U_afterLens0, 
+# 								[[-R0,R0],[-R0,R0]], z0, k)
+# 	effectiveR_lens1=0.0055
+# 	x, y=np.meshgrid(*[np.linspace(0,effectiveR_lens1,400) for i in range(2)])
+# 	xy=np.stack((x,y), axis=2)
+# 	# '''
+# 	fieldBeforeLens1 = addStaticZ(U_beforeLens1, z1)(xy)
+# 	save_h5_image(f"fieldBeforeLens1_{z0}_{effectiveR_lens1}.h5", fieldBeforeLens1, f0=f0,ray=np.max(xy))
+# 	'''
+# 	fieldBeforeLens1 = load_h5_image(f"fieldBeforeLens1_{f0}_{effectiveR_lens1}.h5")
+# 	#'''
+# 	fieldBeforeLens1 = np.concatenate((np.flip(fieldBeforeLens1[1:,:], axis=(0)), fieldBeforeLens1), axis=0)
+# 	fieldBeforeLens1 = np.concatenate((np.flip(fieldBeforeLens1[:,1:], axis=(1)), fieldBeforeLens1), axis=1)
+# 	# plot2D(fieldBeforeLens1,[-effectiveR_lens1,effectiveR_lens1],[-effectiveR_lens1,effectiveR_lens1], "fieldBeforeLens1")
+# 	objective_Ray = fieldBeforeLens1.shape[0] * lam * f1 / effectiveR_lens1 / 2
+# 	U_objective = fftshift(fft2(fieldBeforeLens1))
+# 	# plot2D(U_objective,[-objective_Ray,objective_Ray],[-objective_Ray,objective_Ray], "fieldBeforeLens1")
+# a=0
 # U_afterLens1=passThroughLens_separated(U_beforeLens1, k, f1, R1)
 
 # U_objective = expandInFreeSpace_separated(U_afterLens1, 
@@ -444,3 +557,20 @@ a=0
 
 # plot2D_function(addStaticY(U_objective,0), [0,effectiveR_lens0/10],[z2-f0*.9,z2+f0*.9],51,51, "U_objective")
 
+
+'''-----------------------------------test with gaussian beam-------------------------------------------------------'''
+w0=100e-6
+f=50e-3
+R=10e-3
+zlens=100e-3
+lam=830e-9
+k=2*np.pi/lam
+
+U0=gaussian_beam_separated(w0,k)
+plot2D_function(addStaticY(toComplex(U0),0), [-0,.4e-3],[0,zlens],51,51, "U_beforeLens1")
+
+U_afterLens0=passThroughLens_separated(U0, k, f, R)
+# plot2D_function(addStaticZ(toComplex(U_afterLens0),z0), [-R,R],[-R,R],50,50, "U_afterLens0")
+
+U_final = expandInFreeSpace_separated(U_afterLens0,[[-R,R],[-R,R]],zlens,k)
+plot2D_function(addStaticY(U_final,0), [0,.4e-3],[120e-3,200e-3],50,50, "U_beforeLens1_xz")
