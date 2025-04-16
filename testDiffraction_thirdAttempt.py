@@ -138,14 +138,19 @@ from scipy.ndimage import label, minimum_filter, maximum_filter
 
 
 class mappedFunction:
-	def __init__(self, f, center, size, resolution):
+	def __init__(self, f, center, size, resolution, subRange=None):
 		self.f=f
 		self.center=center.astype(float)
 		self.size=size.astype(float)
 		self.resolution=resolution
+		self.subRange=subRange
+        
 	
 	def __call__(self, *args, **kwds):
-		return self.f(*args, **kwds)
+		map = self.f(*args, **kwds)
+		if self.subRange is not None:
+			map[self.subRange(*args, **kwds)] = np.nan
+		return map
 	
 	
 	def xy_toIndexes(self, xy):
@@ -261,7 +266,7 @@ class mappedFunction:
 			
 	def getZoomedFlatSections(self, epsilon, minCoveredArea=0.35, isFirst=True):
 		xy = self.getXY()
-		map = self.f(xy)
+		map = self(xy)
 		allSections = mappedFunction.getConstantSections(map, epsilon)
 		#extend the island by 2 pixels, to avoid losing valid values of the islands when we zoom
 		allSections = maximum_filter(allSections, size=5, mode='constant', cval=-np.inf)
@@ -281,7 +286,7 @@ class mappedFunction:
 			if np.sum(islandSize / self.size) > 1.5:#section is zoomed enough?
 				coveredArea = np.sum(islandMap) / islandMap.size
 				if coveredArea >= minCoveredArea:#section covers enough area?
-					return [self]
+					return [mappedFunction(self.f, islandCenter, islandSize, self.resolution, subRange = partial(self.notInIsland,island=islandMap))]
 				#else, let's half the region, hoping that the 2 halfs can be better zoomed in a rectangle
 				(left, right) = self.getBestDivisionForCoveredArea()
 				allSubMaps += (left.getZoomedFlatSections(epsilon, minCoveredArea, isFirst=False))
@@ -293,21 +298,20 @@ class mappedFunction:
 		for islandIdx in range(nOfIslands):
 			island = islandMap == islandIdx + 1
 			islandCenter, islandSize = self.getIslandCenterAndSize(island, self.center, self.size, self.resolution)
-			def f_removeNearbyIslands(xy):
-				z=self.f(xy)
-				z[self.notInIsland(xy, island)] = np.nan
-				return z
-			submap = mappedFunction(f_removeNearbyIslands, islandCenter, islandSize, self.resolution)
+			# def f_removeNearbyIslands(xy):
+			# 	z=self(xy)
+			# 	z[self.notInIsland(xy, island)] = np.nan
+			# 	return z
+			submap = mappedFunction(self.f, islandCenter, islandSize, self.resolution, subRange = partial(self.notInIsland,island=island))
 			allSubMaps += (submap.getZoomedFlatSections(epsilon, minCoveredArea, isFirst=False))
+		
 		if len(allSubMaps) > 0:
-			if len(allSubMaps) > 0:
-				return allSubMaps
-			return [self]
-		return allSubMaps
+			return allSubMaps
+		return []
 	
 	def integral(self):
 		xy=self.getXY()
-		z = self.f(xy)
+		z = self(xy)
 		z = np.nan_to_num(z, nan=0)
 		return np.sum(z) * np.prod(self.size / self.resolution)	
 

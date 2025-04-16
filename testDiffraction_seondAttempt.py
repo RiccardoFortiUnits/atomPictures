@@ -30,7 +30,7 @@ def hreal_separated(xyz,k):
 	'''
 	r=np.linalg.norm(xyz,axis=-1)
 	cosTheta=xyz[...,2]/r
-	return cosTheta/r, k*r
+	return cosTheta/r * k / (2j*np.pi), k*r
 def impulseExpansionInFreeSpace(xyz1, U0, xyz0, k):
 	return U0(xyz0) * h(xyz1-xyz0, k)
 
@@ -277,14 +277,15 @@ def expandInFreeSpace_separated(U0, xy0_ranges,z0=0, k=1):
 					return ray * np.exp(1j * angle)
 				
 				startMap = mappedFunction(getOnlyAngle, startCenter, startSize, np.repeat(nOfSamplesForMapSearch,2))
-				zoomedMaps = startMap.getZoomedFlatSections(np.pi*4,.3)
+				zoomedMaps = startMap.getZoomedFlatSections(np.pi*8,.3)
+				# zoomedMaps = [startMap]
 				integ = 0
 				for map in zoomedMaps:
 					map.f = getImpulseExpansion
 					map.resolution = np.repeat(nOfSamplesPerDimension,2)
 					integ += map.integral()
 				integral[i][j] = integ
-		return integral * k/(2j*np.pi)
+		return integral
 	return U1
 
 def expandInFreeSpace_separated_old(U0, xy0_ranges,z0=0, k=1):
@@ -371,7 +372,7 @@ def expandInFreeSpace_separated_old(U0, xy0_ranges,z0=0, k=1):
 				validSections = (validSections < gradLim).astype(float)
 				integral[i][j] = np.sum(allImpulseResponses * validSections) / gridSize * np.prod(np.array([(max-min)*scale for min,max in newRange]))
 
-		return integral * k/(2j*np.pi)
+		return integral
 	return U1
 
 def expandInFreeSpace(U0, xy0_ranges,z0=0, k=1):
@@ -465,10 +466,10 @@ pow = 1
 R0 = 16e-3
 f1 = 200e-3
 R1 = 27e-3
-lam = 399e-9#1e-6#f0/3#399e-9
+lam = 899e-9#1e-6#f0/3#399e-9
 k=2*np.pi/lam
 
-z0=0#f0
+z0=f0
 z1=z0+f1
 z2=z1+f1
 effectiveR_lens0=R0
@@ -503,13 +504,13 @@ def gaussian_beam_separated(w0, k):
 		phi = np.arctan(z / zR)
 
 		amplitude = (w0 / wz) * np.exp(-(r**2) / wz**2)
-		phase = -(k * z + k * (r**2) / (2 * Rz) - phi)
+		phase = (k * z + k * (r**2) / (2 * Rz) - phi)
 		phase = np.nan_to_num(phase, nan=0)
 		return amplitude, phase
 	return U0
 
 '''------------------------------------------------------------------------------------------'''
-# U0=dipoleField_separated(R0/10,k)
+# U0=U0_separated(k)
 # U_afterLens0=passThroughLens_separated(U0, k, f0, R0)
 # # plot2D_function(addStaticY(toComplex(U0),0), [-effectiveR_lens0,effectiveR_lens0],[0,z0],50,50, "U_beforeLens1")
 # # plot2D_function(addStaticZ(toComplex(U_afterLens0),z0), [-effectiveR_lens0,effectiveR_lens0],[-effectiveR_lens0,effectiveR_lens0],50,50, "U_afterLens0")
@@ -517,7 +518,8 @@ def gaussian_beam_separated(w0, k):
 
 # U_beforeLens1=expandInFreeSpace_separated(U_afterLens0, 
 # 							[[-effectiveR_lens0,effectiveR_lens0],[-effectiveR_lens0,effectiveR_lens0]], z0, k)
-# plot2D_function(addStaticY(U_beforeLens1,0), [0,R0],[z0+f1*.5,z0+f1*1.5],50,50, "U_beforeLens1_xz")
+# # plot2D_function(addStaticY(U_beforeLens1,0), [0,R0*1.4],[.15,.22],2,2, "U_beforeLens1_xz")
+# plot2D_function(addStaticY(U_beforeLens1,0), [0,R0*1.4],[z0+f1*.2,z0+f1*1.5],20,20, "U_beforeLens1_xz")
 # # plot1D_function(addStaticYZ(U_beforeLens1,0,z0+f0+lam*50), [0,1e-5],100, "U_beforeLens1_xz")
 # # plot1D_function(addStaticYZ(U_beforeLens1,0,z1), [0,R0*.001],100, "U_beforeLens1_xz")
 # # plot2D_function(addStaticZ(U_beforeLens1,z1), [-0,.006],[-0,.006],20,20, "U_beforeLens1_xy")
@@ -562,15 +564,24 @@ def gaussian_beam_separated(w0, k):
 w0=100e-6
 f=50e-3
 R=10e-3
-zlens=100e-3
+zlens=150e-3
 lam=830e-9
 k=2*np.pi/lam
+# print(f"divergence angle: {lam/(np.pi*w0)*1e3} mrad")
+# print(f"rayleigh length: {np.pi*w0**2/lam} m")
 
 U0=gaussian_beam_separated(w0,k)
-plot2D_function(addStaticY(toComplex(U0),0), [-0,.4e-3],[0,zlens],51,51, "U_beforeLens1")
+# plot2D_function(addStaticY(toComplex(U0),0), [-0,w0*2],[0,zlens],51,51, "U_beforeLens1")
 
 U_afterLens0=passThroughLens_separated(U0, k, f, R)
-# plot2D_function(addStaticZ(toComplex(U_afterLens0),z0), [-R,R],[-R,R],50,50, "U_afterLens0")
+# plot2D_function(addStaticZ(toComplex(U_afterLens0),z0), [-.2e-3,.2e-3],[-.2e-3,.2e-3],50,50, "U_afterLens0")
 
 U_final = expandInFreeSpace_separated(U_afterLens0,[[-R,R],[-R,R]],zlens,k)
-plot2D_function(addStaticY(U_final,0), [0,.4e-3],[120e-3,200e-3],50,50, "U_beforeLens1_xz")
+plot2D_function(addStaticY(U_final,0), [0,w0*1.5],[200e-3,250e-3],30,30, "U_beforeLens1_xz")
+# plot2D_function(addStaticZ(U_final,100e-3), [0,.2e-3],[0,.2e-3],20,20, "U_beforeLens1_xz")
+
+# U_intermediate = lambda xyz:U_afterLens0(xyz)
+
+# U_final = expandInFreeSpace_separated(U_intermediate,[[-R,R],[-R,R]],50e-3,k)
+# plot2D_function(addStaticY(toComplex(U0),0), [-0,w0*2],[0e-3,200e-3],20,20, "U_beforeLens1")
+# plot2D_function(addStaticY(U_final,0), [0,w0*2],[0e-3,200e-3],20,20, "U_beforeLens1_xz")
