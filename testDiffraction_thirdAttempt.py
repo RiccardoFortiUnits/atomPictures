@@ -142,7 +142,7 @@ class mappedFunction:
 		self.f=f
 		self.center=center.astype(float)
 		self.size=size.astype(float)
-		self.resolution=resolution
+		self.resolution=resolution.astype(int)
 		self.subRange=subRange
         
 	

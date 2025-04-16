@@ -360,26 +360,27 @@ class Camera:
 
 			save_h5_image(saveToFile, image, **additionalAttributesToSave)
 		return image
-
-
-		# normalizedHits = (hittingPositions[:,1:]).T
-		# normalizedHits[0] = np.floor((normalizedHits[0] - self.y_range[0]) / (self.y_range[1] - self.y_range[0]) * self.resolution)
-		# normalizedHits[1] = np.floor((normalizedHits[1] - self.z_range[0]) / (self.z_range[1] - self.z_range[0]) * self.resolution)
-		# normalizedHits = normalizedHits.astype(int)
-		# image = np.zeros((self.resolution, self.resolution))
-		# for hit in normalizedHits.T:
-		#     image[hit[1]][hit[0]] += 1
-		# if plot:
-		#     plt.figure(figsize=(14, 12))  # Ensure the plot is always square
-		#     plt.imshow(image, extent=(self.y_range[0], self.y_range[1], self.z_range[0], self.z_range[1]), origin='lower', cmap='viridis', aspect='auto')
-		#     plt.xlim(self.y_range)
-		#     plt.ylim(self.z_range)
-		#     plt.colorbar(label='Intensity')
-		#     plt.xlabel('x')
-		#     plt.ylabel('y')
-		#     plt.title('2D Function Plot')
-		#     plt.show()
-		# return image
+	@staticmethod
+	def blurFromImages(folderPath):
+		images, metadata = getImagesFrom_h5_files(folderPath)
+		z = np.array([val['zAtom'] for val in metadata.values()])
+		ordered = np.argsort(z)
+		images = np.array(images)[ordered]
+		z = z[ordered]
+		zmin, zmax = z[0], z[-1]
+		zstep = z[1] - z[0]
+		xymin = -np.mean([val['range'] for val in metadata.values()])/2
+		xymax = -xymin
+		xystep = (xymax-xymin)/images.shape[1]
+		images = np.abs(images)**2
+		def getFromImages(x,y,z):
+			z = ((z-zmin)/(zmax-zmin) * (len(images)-1)).astype(int)
+			x = ((x-xymin)/(xymax-xymin) * (len(images[0])-1)).astype(int)
+			y = ((y-xymin)/(xymax-xymin) * (len(images[0][0])-1)).astype(int)
+			return images[z,x,y]
+		# plot2D_function(lambda x,z: getFromImages(x,0,z), [xymin,xymax], [zmin,zmax], len(images[0]), len(images))
+		f = randExtractor.distribFunFromPDF_2D_1D(getFromImages, [[xymin,xymax],[xymin,xymax],[zmin,zmax]], [xystep,xystep,zstep])
+		return f
 
 class randExtractor:
 	def __init__(self, distribFun, plotFunction = None):
@@ -406,20 +407,41 @@ class randExtractor:
 			the x values are equally distanced, and there's no limitation on the y values)
 		x: n-array
 		y: nxm-array
-		z: nxm-array, z[i][j] = x[i] * y[i][j]
+		z: nxm-array, z[i][j] = f(x[i], y[i][j])
 		valuesToInterpolate: px2 array
 		'''
 		#let's find where the values would be in the x axis
 		interpolatedIndex = (valuesToInterpolate[:,0]-x[0])*(len(x)-1)/(x[-1]-x[0])
 		i = interpolatedIndex.astype(int)
 		p = interpolatedIndex - i.astype(float)
-		# leftValues = np.array([np.interp(valuesToInterpolate[:,1][j], y[i[j]], z[i[j]]) for j in range(len(i))])
-		# i += 1
-		# rigthValues = np.array([np.interp(valuesToInterpolate[:,1][j], y[i[j]], z[i[j]]) for j in range(len(i))])
-		# return leftValues * (1-p) + rigthValues * p
 		averageY = (y[i].T*(1-p)+y[i+1].T*p).T
 		averageZ = (z[i].T*(1-p)+z[i+1].T*p).T
 		return np.array([np.interp(valuesToInterpolate[:,1][j], averageY[j], averageZ[j]) for j in range(len(i))])
+	@staticmethod
+	def interpolate3D_semigrid(x,y,z, f,valuesToInterpolate):
+		'''
+		x: n-array
+		y: m-array
+		z: nxmxp-array
+		f: nxmxp-array, f[i][j][k] = f(x[i], y[j], z[i][j][k])
+		valuesToInterpolate: qx3 array
+		'''
+		#let's find where the values would be in the x axis
+		interpolatedIndex = (valuesToInterpolate[:,0]-x[0])*(len(x)-1)/(x[-1]-x[0])
+		x_i = interpolatedIndex.astype(int)
+		x_p = (interpolatedIndex - x_i.astype(float))[:,None]
+		interpolatedIndex = (valuesToInterpolate[:,1]-y[0])*(len(y)-1)/(y[-1]-y[0])
+		y_i = interpolatedIndex.astype(int)
+		y_p = (interpolatedIndex - y_i.astype(float))[:,None]
+		averageZ =	z[x_i	,	y_i]	* (1-x_p)	* (1-y_p)	+ \
+			  		z[x_i+1	,	y_i]	* (x_p)		* (1-y_p)	+ \
+			  		z[x_i	,	y_i+1]	* (1-x_p)	* (y_p)		+ \
+					z[x_i+1	,	y_i+1]	* (x_p)		* (y_p)
+		averageF =	f[x_i	,	y_i]	* (1-x_p)	* (1-y_p)	+ \
+			  		f[x_i+1	,	y_i]	* (x_p)		* (1-y_p)	+ \
+			  		f[x_i	,	y_i+1]	* (1-x_p)	* (y_p)		+ \
+					f[x_i+1	,	y_i+1]	* (x_p)		* (y_p)
+		return np.array([np.interp(valuesToInterpolate[:,2][j], averageZ[j], averageF[j]) for j in range(len(averageZ))])
 
 
 	@staticmethod
@@ -448,7 +470,6 @@ class randExtractor:
 		def get_x_y(offsets, *t):
 			rand = np.random.random(np.shape(offsets))
 			x = inverse_cdf_x_interp(rand[:,0])
-			# y = griddata(inverse_y_points, inverse_y_values, np.column_stack((x,rand[:,1])), method='linear')
 			y = randExtractor.interpolate2D_semigrid(grids[0], cdf_values_y, meshed_grids[1], np.column_stack((x,rand[:,1])))
 			return offsets + np.column_stack((x,y))
 		return randExtractor(get_x_y)
@@ -530,7 +551,7 @@ class randExtractor:
 			#we'll choose a random point in the cell
 			cells = meshed_grids[indexes]#np.array([grid_points[i] for i in np.unravel_index(index, pdf_values.shape)])
 			cellSizes = meshed_grids[indexes + 1] - cells
-			cell += cellSize * (np.random.random(len(ranges)) * cellSizes)
+			cell += cellSizes * (np.random.random(len(ranges)) * cellSizes)
 			return offset + cell
 		return randExtractor(getValue)
 
@@ -540,6 +561,41 @@ class randExtractor:
 			mask = np.random.rand(data.shape[0]) > lostProbability
 			return data[mask]
 		return randExtractor(removeLost)
+	
+	@staticmethod
+	def distribFunFromPDF_2D_1D(pdf, xyt_ranges, xyt_steps):        
+		#use this distribution generator for 2D functions with an extra control dimension t (PDF(x,y,t) | integr(PDF(x,y,t) dxdy) = 1 for each t)
+		#the generated extractor will take as inputs the value t (and an offset for (x,y)) and return a random value (x,y)
+		# Create a meshgrid for the given ranges and steps
+		grids = [np.linspace(r[0], r[1], 1+int(np.ceil((r[1]-r[0])/s))) for r, s in zip(xyt_ranges, xyt_steps)]
+		meshed_grids = np.meshgrid(*grids, indexing='ij')
+		grid_points = np.stack(meshed_grids, axis=-1)
+
+		pdf_values = pdf(*[grid_points[..., i] for i in range(len(xyt_ranges))])
+
+		#generic probability of finding x (independently from the value of y)
+		pdf_values_x = np.sum(pdf_values, axis=1)
+		cdf_values_x = np.cumsum(pdf_values_x, axis=0)
+		cdf_values_x -= cdf_values_x[0,:]
+		cdf_values_x /= cdf_values_x[-1,:]
+
+		#probability of finding y, given a fixed value for x
+		cdf_values_y = np.cumsum(pdf_values, axis = 1)
+		cdf_values_y -= cdf_values_y[:,0,][:,None,:]
+		cdf_values_y /= cdf_values_y[:,-1,:][:,None,:]
+
+		cdf_values_y = np.swapaxes(cdf_values_y, 1, 2)
+		meshed_grids[1] = np.swapaxes(meshed_grids[1], 1, 2)
+
+		def get_x_y(offsets, t):
+			rand = np.random.random(np.shape(offsets))
+			x = randExtractor.interpolate2D_semigrid(grids[2], cdf_values_x.T, meshed_grids[0][:,0,:].T, np.column_stack((t,rand[:,0])))
+			
+			y = randExtractor.interpolate3D_semigrid(grids[0], grids[2], cdf_values_y, meshed_grids[1], np.column_stack((x,t,rand[:,1])))
+			return offsets + np.column_stack((x,y))
+		return randExtractor(get_x_y)
+
+
 
 if __name__ == '__main__':
 
@@ -595,32 +651,32 @@ if __name__ == '__main__':
 	# def f11(x,t):
 	# 	return np.abs((x-t)**2)
 	# f=randExtractor.distribFunFromPDF_1D_1D(f11,[0,1],.05,[0,1],.01)
-	waist = 1e-3 
-	power = 10e-3
+	# waist = 1e-3 
+	# power = 10e-3
 
-	dt = 5e-9
-	detuning = 0#-5.5*trajlib.MHz
-	Lambda = 399e-9
-	k = 2*np.pi/Lambda
-	tweezerPower = 10e-3
-	E0 = np.sqrt(tweezerPower*753.4606273337396)
-	effectiveFocalLength = 25.5e-3
-	tweezerWaist = 1e-4
-	objective_Ray = 15.3e-3
+	# dt = 5e-9
+	# detuning = 0#-5.5*trajlib.MHz
+	# Lambda = 399e-9
+	# k = 2*np.pi/Lambda
+	# tweezerPower = 10e-3
+	# E0 = np.sqrt(tweezerPower*753.4606273337396)
+	# effectiveFocalLength = 25.5e-3
+	# tweezerWaist = 1e-4
+	# objective_Ray = 15.3e-3
 
-	# startPositions, directions = exp.getScatteredPhotons()
-	# # G = randExtractor.distribFunFromPDF_2D(lambda x,y: gauss(x, y,1,0,1e-8), [[-1e-9,1e-9]]*2, [5e-11]*2)
-	#'''
-	M = 8
-	finalPixelSize = 4.6e-6
-	finalNOfPixels = 40
-	finalCameraSize = finalNOfPixels * finalPixelSize
-	initialCameraSize = finalCameraSize / M#if we considered all the pixels, the camera size should be == 2*lensRadius = 32e-3 m
-	initialPixelSize = finalPixelSize / M
-	lensPosition = effectiveFocalLength
-	lensRadius = 16e-3
-	f11=lambda r,z:blur(r,z, k, E0, lensPosition, tweezerWaist, lensRadius)
-	plot2D_function(f11, [-0, lensRadius/100], [-50.1/k, 50/k], 50, 50)
+	# # startPositions, directions = exp.getScatteredPhotons()
+	# # # G = randExtractor.distribFunFromPDF_2D(lambda x,y: gauss(x, y,1,0,1e-8), [[-1e-9,1e-9]]*2, [5e-11]*2)
+	# #'''
+	# M = 8
+	# finalPixelSize = 4.6e-6
+	# finalNOfPixels = 40
+	# finalCameraSize = finalNOfPixels * finalPixelSize
+	# initialCameraSize = finalCameraSize / M#if we considered all the pixels, the camera size should be == 2*lensRadius = 32e-3 m
+	# initialPixelSize = finalPixelSize / M
+	# lensPosition = effectiveFocalLength
+	# lensRadius = 16e-3
+	# f11=lambda r,z:blur(r,z, k, E0, lensPosition, tweezerWaist, lensRadius)
+	# plot2D_function(f11, [-0, lensRadius/100], [-50.1/k, 50/k], 50, 50)
 
 	# f=randExtractor.distribFunFromPDF_1D_1D(f11,np.array([0,1])*.02, 0.0005, np.array([-1,1])*1, 0.01)
 	# # # f(0,np.repeat(0.5,3))
@@ -642,4 +698,29 @@ if __name__ == '__main__':
 	# x=f(np.zeros((10000,2)))
 	# plt.scatter(x[0],x[1], alpha=.03)
 	# plt.show()
+
+
+
+	images, metadata = getImagesFrom_h5_files("blurs/")
+	z = np.array([val['zAtom'] for val in metadata.values()])
+	ordered = np.argsort(z)
+	images = np.array(images)[ordered]
+	z = z[ordered]
+	zmin, zmax = z[0], z[-1]
+	zstep = z[1] - z[0]
+	xymin = -np.mean([val['range'] for val in metadata.values()])/2
+	xymax = -xymin
+	xystep = (xymax-xymin)/images.shape[1]
+	images = np.abs(images)**2
+	def getFromImages(x,y,z):
+		z = ((z-zmin)/(zmax-zmin) * (len(images)-1)).astype(int)
+		x = ((x-xymin)/(xymax-xymin) * (len(images[0])-1)).astype(int)
+		y = ((y-xymin)/(xymax-xymin) * (len(images[0][0])-1)).astype(int)
+		return images[z,x,y]
+	# plot2D_function(lambda x,z: getFromImages(x,0,z), [xymin,xymax], [zmin,zmax], len(images[0]), len(images))
+	f = randExtractor.distribFunFromPDF_2D_1D(getFromImages, [[xymin,xymax],[xymin,xymax],[zmin,zmax]], [xystep,xystep,zstep])
+	z = np.repeat(0,1000)
+	xy=f(np.zeros((len(z),2)), z)
+	plt.scatter(xy[:,0],xy[:,1], alpha=.03)
+	plt.show()
 	pass

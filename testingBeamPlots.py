@@ -19,9 +19,9 @@ power = 10e-3
 ##test experiment and trajectory plot
 exp = trajlib.experiment()
 
-for i in range(1):
-# 	exp.add_atom(trajlib.Ytterbium(*(np.random.random((3,))*1e-6-.5e-6), 0,0,0,isotope=174))
-	exp.add_atom(trajlib.Ytterbium(0,0,0, 0,0,0,isotope=174))
+for i in range(10):
+	exp.add_atom(trajlib.Ytterbium(*((np.random.random((3,))-.5)*np.array([90e-6,90e-6,0])), 0,0,0,isotope=174))
+	# exp.add_atom(trajlib.Ytterbium(0,0,0, 0,0,0,isotope=174))
 dt = 5e-9
 detuning = 0#-5.5*trajlib.MHz
 freq = trajlib.c/(exp.atoms[0].transitions[0].Lambda) + detuning
@@ -75,17 +75,12 @@ tweezerWaist = 1e-4
 objective_Ray = 15.3e-3
 
 startPositions, directions = exp.getScatteredPhotons()
-# # ainy_normalized = lambda x,y : ainy(x*1e10, y*1e10)
-# # Ainy = randExtractor.distribFunFromPDF_2D(ainy_normalized, [[-1e-4,1e-4]]*2, [5e-5]*2)
 
-# def gauss (x,y, A, x0, sigma):
-# 	rho = np.sqrt(x**2 + y**2)
-# 	return A * np.exp(-(rho-x0)**2/(2*sigma**2))
-# # G = randExtractor.distribFunFromPDF_2D(lambda x,y: gauss(x, y,1,0,1e-8), [[-1e-9,1e-9]]*2, [5e-11]*2)
-G = randExtractor.distribFunFromradiusPDF_2D_1D(lambda r,z: blur(r,z - 1e-4,k,E0,effectiveFocalLength, tweezerWaist, objective_Ray), [-1e-8,1e-8], 1e-9, [0.9e-4,1.1e-4], 1e-7)
+G = Camera.blurFromImages("blurs/")
 #'''
-magnificationGrid = pixelGrid(4.6e-6,4.6e-6,100,100, G)
-quantumEfficiencyGrid = pixelGrid(4.6e-6,4.6e-6,100,100, randExtractor.randomLosts(0.1))
+nPixels = 100
+magnificationGrid = pixelGrid(4.6e-6*nPixels,4.6e-6*nPixels,nPixels,nPixels, lambda xy, z: G(xy, z - 1e-4))
+quantumEfficiencyGrid = pixelGrid(4.6e-6*nPixels,4.6e-6*nPixels,nPixels,nPixels, randExtractor.randomLosts(0.1))
 c = Camera(position=(0,0,1e-4), 
 		   orientation=(0,-np.pi/2,0), 
 		   radius=1e-4,
@@ -101,8 +96,8 @@ c = Camera(position=(25.5e-3,0,0),
 
 
 image = c.takePicture(startPositions, directions, plot=True)
-
-quantumEfficiencyGrid = cMosGrid(4.6e-6,4.6e-6,100,100, randExtractor.randomLosts(0.1), "Orca_testing/shots/", imageStart = (10,10), imageSizes = (-10,-10))
+nPixels = 100
+quantumEfficiencyGrid = cMosGrid(4.6e-6*nPixels,4.6e-6*nPixels,nPixels,nPixels, randExtractor.randomLosts(0.1), "Orca_testing/shots/", imageStart = (10,10), imageSizes = (-10,-10))
 c.pixelGrids = (magnificationGrid, quantumEfficiencyGrid)
 image = c.takePicture(startPositions, directions, plot=True)
 exp.plotTrajectoriesAndCameraAcquisition(c)

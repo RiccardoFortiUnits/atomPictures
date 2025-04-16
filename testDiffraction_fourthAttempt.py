@@ -166,21 +166,21 @@ def expandInFreeSpace(U0, xy0_ranges,z0=0, k=1):
 
 
 '''-----------------------------------test with gaussian beam-------------------------------------------------------'''
-w0=50e-6
-f=70e-3
-R=w0*20
-zlens=150e-3
-lam=830e-9
-k=2*np.pi/lam
+# w0=50e-6
+# f=70e-3
+# R=w0*20
+# zlens=150e-3
+# lam=830e-9
+# k=2*np.pi/lam
 
-U0=gaussian_beam(w0,k)
-# plot2D_function(addStaticY(toComplex(U0),0), [-0,w0*2],[0,zlens],51,51, "U_beforeLens")
+# U0=gaussian_beam(w0,k)
+# # plot2D_function(addStaticY(toComplex(U0),0), [-0,w0*2],[0,zlens],51,51, "U_beforeLens")
 
-U_afterLens0=passThroughLens(U0, k, f, R)
-# plot2D_function(addStaticZ(toComplex(U_afterLens0),z0), [-.2e-3,.2e-3],[-.2e-3,.2e-3],50,50, "U_afterLens")
+# U_afterLens0=passThroughLens(U0, k, f, R)
+# # plot2D_function(addStaticZ(toComplex(U_afterLens0),z0), [-.2e-3,.2e-3],[-.2e-3,.2e-3],50,50, "U_afterLens")
 
-U_final = expandInFreeSpace(U_afterLens0,[[-R,R],[-R,R]],zlens,k)
-plot2D_function(addStaticY(U_final,0), [0,w0],[200e-3,300e-3],10,20, "U_afterLens")
+# U_final = expandInFreeSpace(U_afterLens0,[[-R,R],[-R,R]],zlens,k)
+# plot2D_function(addStaticY(U_final,0), [0,w0],[200e-3,300e-3],10,20, "U_afterLens")
 
 
 # U_final = expandInFreeSpace(U0,[[-R,R],[-R,R]],-200e-3,k)
@@ -190,55 +190,61 @@ plot2D_function(addStaticY(U_final,0), [0,w0],[200e-3,300e-3],10,20, "U_afterLen
 
 '''-----------------------------------double lens-------------------------------------------------------'''
 
-# f0 = 25.5e-3
-# pow = 1
-# R0 = 16e-3
-# f1 = 200e-3
-# R1 = 27e-3
-# lam = 899e-9#1e-6#f0/3#399e-9
-# k=2*np.pi/lam
+f0 = 25.5e-3
+pow = 1
+R0 = 16e-3
+f1 = 200e-3
+R1 = 27e-3
+lam = 899e-9#1e-6#f0/3#399e-9
+k=2*np.pi/lam
 
-# pixelSize = 4.6e-6
-# requestedRange = pixelSize * 8
-# resolution = 50
-# range_beforeLens1 = resolution * lam * f1 / requestedRange
-# print(requestedRange, resolution, range_beforeLens1)
-# zAtom = np.linspace(-10e-6, 10e-6, 41)
-# contour = np.zeros((len(zAtom), resolution))
-# for i,z in enumerate(zAtom):
+pixelSize = 4.6e-6
+requestedRange = pixelSize * 8
+resolution = 150
+range_beforeLens1 = resolution * lam * f1 / requestedRange
+print(requestedRange, resolution, range_beforeLens1)
+zAtom = np.linspace(-10e-6, 10e-6, 41)
+contour = np.zeros((len(zAtom), resolution))
+for i,z in enumerate(zAtom):
 	
-# 	file_name = f"beforeLens1_atomZ={z:.2e}.h5"
-# 	if False or not os.path.exists(file_name):
-# 		zLens0=f0+z
-# 		zLens1=zLens0+f0+f1
-# 		zObjective=zLens1+f1
+	file_name = f"beforeLens1_atomZ={z:.2e}.h5"
+	if not os.path.exists(file_name):
+		zLens0=f0+z
+		zLens1=zLens0+f0+f1
+		zObjective=zLens1+f1
 
-# 		U_beforeLens0 = dipoleField(k)
-# 		U_afterLens0 = passThroughLens(U_beforeLens0, k, f0, R0)
+		U_beforeLens0 = dipoleField(k)
+		U_afterLens0 = passThroughLens(U_beforeLens0, k, f0, R0)
 
-# 		U_beforeLens1 = expandInFreeSpace(U_afterLens0,[[-R0,R0],[-R0,R0]],zLens0,k)
-# 		# plot2D_function(addStaticY(U_beforeLens1,0), [0,R0*1.1],[zLens0 + .5*f1, zLens0 + 1.5*f1],20,20, "U_beforeLens1_xz")
-# 		# plot2D_function(addStaticZ(U_beforeLens1,zLens1), [0,R0*1.1],[0,R0*1.1],20,20, "U_beforeLens1_xy")
+		U_beforeLens1 = expandInFreeSpace(U_afterLens0,[[-R0,R0],[-R0,R0]],zLens0,k)
+		# plot2D_function(addStaticY(U_beforeLens1,0), [0,R0*1.1],[zLens0 + .5*f1, zLens0 + 1.5*f1],20,20, "U_beforeLens1_xz")
+		# plot2D_function(addStaticZ(U_beforeLens1,zLens1), [0,R0*1.1],[0,R0*1.1],20,20, "U_beforeLens1_xy")
 
-# 		mappedFun_beforeLens1 = mappedFunction(addStaticZ(U_beforeLens1,zLens1), np.array([0,0]), np.repeat(range_beforeLens1, 2), np.repeat(resolution,2))
-# 		U_beforeLens1_calculated = mappedFun_beforeLens1(mappedFun_beforeLens1.getXY())
-# 		# plot2D(U_beforeLens1_calculated,[-range_beforeLens1/2,range_beforeLens1/2],[-range_beforeLens1/2,range_beforeLens1/2], "fieldAtObjective")
+		mappedFun_beforeLens1 = mappedFunction(addStaticZ(U_beforeLens1,zLens1), np.array([0,0]), np.repeat(range_beforeLens1, 2), np.repeat(resolution,2))
+		U_beforeLens1_calculated = mappedFun_beforeLens1(mappedFun_beforeLens1.getXY())
+		# plot2D(U_beforeLens1_calculated,[-range_beforeLens1/2,range_beforeLens1/2],[-range_beforeLens1/2,range_beforeLens1/2], "fieldAtObjective")
 		
-# 		save_h5_image(file_name, U_beforeLens1_calculated, zAtom = z, range = mappedFun_beforeLens1.size[0], resolution = mappedFun_beforeLens1.resolution[0])
+		save_h5_image(file_name, U_beforeLens1_calculated, zAtom = z, range = range_beforeLens1, resolution = resolution)
 
-# 	#let's get it from the file
-# 	U_beforeLens1_calculated, metadata = load_h5_image(file_name, returnMetadata=True)
+	#let's get it from the file
+	U_beforeLens1_calculated, metadata = load_h5_image(file_name, returnMetadata=True)
 
-# 	Range = metadata['range']
-# 	imageResolution = metadata['resolution']
+	Range = metadata['range']
+	imageResolution = metadata['resolution']
 
-# 	U_objective = fftshift(fft2(U_beforeLens1_calculated))
-# 	contour[i] = np.abs(U_objective[int(resolution/2),:])
+	U_objective = fftshift(fft2(U_beforeLens1_calculated))
+	
+	file_name = f"camera_atomZ={z:.2e}.h5"
+	if not os.path.exists(file_name):
+		save_h5_image(file_name, U_objective, zAtom = z, range = imageResolution * lam * f1 / Range, resolution = imageResolution)
 
-# 	# objective_Ray = resolution[0] * lam * f1 / Range[0] / 2
-# 	# plot2D(U_objective,[-requestedRange/2,requestedRange/2],[-requestedRange/2,requestedRange/2], "fieldAtObjective")
 
-# plot2D(contour,[-requestedRange/2,requestedRange/2],[-2e-6,2e-6], "fieldAtObjective")
+	contour[i] = np.abs(U_objective[int(resolution/2),:])
+
+	# objective_Ray = resolution[0] * lam * f1 / Range[0] / 2
+	# plot2D(U_objective,[-requestedRange/2,requestedRange/2],[-requestedRange/2,requestedRange/2], "fieldAtObjective")
+
+plot2D(contour,[-requestedRange/2,requestedRange/2],[-2e-6,2e-6], "fieldAtObjective")
 
 
 '''-----------------------double lens with gaussian beam----------------------'''
