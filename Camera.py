@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.special import j1, j0
 from scipy.interpolate import RegularGridInterpolator
 from scipy.interpolate import interp1d, griddata
-from typing import Tuple, List
+from typing import Tuple, List, Union
 import h5py
 import os
 from scipy import integrate
@@ -277,7 +277,7 @@ class refreshing_cMosGrid(cMosGrid):
 
 
 class Camera:
-	def __init__(self, position, orientation, radius, pixelGrids : Tuple[pixelGrid] | List[pixelGrid] | pixelGrid, focusDistance = None):
+	def __init__(self, position, orientation, radius, pixelGrids: Union[Tuple[pixelGrid], List[pixelGrid], pixelGrid], focusDistance=None):
 		self.position = np.array(position)
 		self.orientation = orientation
 		self.radius = radius
@@ -595,6 +595,106 @@ class randExtractor:
 			return offsets + np.column_stack((x,y))
 		return randExtractor(get_x_y)
 
+class experimentViewer:
+	'''to do analysis of pre-computed runs, I don't want to create the entire experiment object 
+	(which would also require to include a bunch of very heavy libraries). This class contains 
+	all the necessary to load/save/show data'''
+	# lastPositons:           array[nOfTimes][nOfAtoms][3] positions of each atom at each time frame
+	# lastHits:               array{timeIndex, atomIndex, laserIndex}[nOfHits] all the recorded, specifies the time, atom and laser involved in the hit
+	# lastGeneratedPhotons:   array[nOfHits][3] the generated photons for each hit
+
+	def saveAcquisition(self, fileName, **metadata):        
+		with h5py.File(fileName, 'w') as f:
+			f.create_dataset("lastPositons", data = self.lastPositons)
+			f.create_dataset("lastHits", data = np.array(self.lastHits))
+			f.create_dataset("lastGeneratedPhotons", data = self.lastGeneratedPhotons)
+			f.attrs.update(metadata)
+
+	def loadAcquisition(self, fileName):        
+		with h5py.File(fileName, 'r') as f:
+			self.lastPositons = np.array(f['lastPositons'])
+			self.lastHits = np.array(f['lastHits'])
+			self.lastHits = (self.lastHits[0], self.lastHits[1], self.lastHits[2])
+			self.lastGeneratedPhotons = np.array(f['lastGeneratedPhotons'])
+			metadata = dict(f.attrs)
+			return metadata
+		
+	def plotTrajectoriesAndCameraAcquisition(self, camera : Camera):
+		hitPositions, hitIdx = camera.hitLens(self.lastPositons[self.lastHits[0], self.lastHits[1]], self.lastGeneratedPhotons, returnHitIndexes=True)
+		hitCamera = np.zeros((len(self.lastHits[0])), dtype=bool)
+		hitCamera[hitIdx] = True
+		fig = plt.figure()
+		ax = fig.add_subplot(111, projection='3d')
+		min_bounds = np.min(self.lastPositons, axis=(0, 1))
+		max_bounds = np.max(self.lastPositons, axis=(0, 1))
+		maxRange = np.max(max_bounds - min_bounds)
+		baseQuiverLength = maxRange / 20
+		min_bounds = (max_bounds + min_bounds) / 2 - maxRange / 2
+		max_bounds = min_bounds + maxRange
+		for atom_idx in range(self.lastPositons.shape[1]):
+			ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
+			ax.scatter(self.lastPositons[0, atom_idx, 0], self.lastPositons[0, atom_idx, 1], self.lastPositons[0, atom_idx, 2])
+		for laser_idx in range(np.max(self.lastHits[2])+1):
+			laserHits = np.where(self.lastHits[2] == laser_idx)[0]
+			if len(laserHits) > 0:
+				time_idx = self.lastHits[0][laserHits]
+				atom_idx = self.lastHits[1][laserHits]
+				ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
+						   label=f'laser {laser_idx+1} hits', s=5)
+				for h in range(len(laserHits)):
+					position = self.lastPositons[time_idx[h], atom_idx[h]]
+					directions = self.lastGeneratedPhotons[laserHits[h]] * baseQuiverLength
+					isAHit = hitCamera[laserHits[h]]
+					if isAHit:
+						ax.quiver(position[0], position[1], position[2], 
+									directions[0], directions[1], directions[2], color='red')
+						# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
+				
+		ax.set_xlabel('X Position (m)')
+		ax.set_ylabel('Y Position (m)')
+		ax.set_zlabel('Z Position (m)')
+		ax.set_xlim(min_bounds[0], max_bounds[0])
+		ax.set_ylim(min_bounds[1], max_bounds[1])
+		ax.set_zlim(min_bounds[2], max_bounds[2])
+		ax.set_title('3D Trajectories of Atoms')
+		ax.legend()
+		plt.show()
+	def plotTrajectories(self):
+		fig = plt.figure()
+		ax = fig.add_subplot(111, projection='3d')
+		min_bounds = np.nanmin(self.lastPositons, axis=(0, 1))
+		max_bounds = np.nanmax(self.lastPositons, axis=(0, 1))
+		max_bounds = np.nanmax(self.lastPositons, axis=(0, 1))
+		maxRange = np.nanmax(max_bounds - min_bounds)
+		quiverLength = maxRange / 20
+		min_bounds = (max_bounds + min_bounds) / 2 - maxRange / 2
+		max_bounds = min_bounds + maxRange
+		for atom_idx in range(self.lastPositons.shape[1]):
+			ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
+			ax.scatter(self.lastPositons[0, atom_idx, 0], self.lastPositons[0, atom_idx, 1], self.lastPositons[0, atom_idx, 2])
+		for laser_idx in range(np.max(self.lastHits[2])+1):
+			laserHits = np.where(self.lastHits[2] == laser_idx)[0]
+			if len(laserHits) > 0:
+				time_idx = self.lastHits[0][laserHits]
+				atom_idx = self.lastHits[1][laserHits]
+				ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
+						   label=f'laser {laser_idx+1} hits', s=5)
+				for h in range(len(laserHits)):
+					position = self.lastPositons[time_idx[h], atom_idx[h]]
+					directions = self.lastGeneratedPhotons[laserHits[h]] * quiverLength
+					ax.quiver(position[0], position[1], position[2], 
+							  directions[0], directions[1], directions[2], color='red')
+				# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
+				
+		ax.set_xlabel('X Position (m)')
+		ax.set_ylabel('Y Position (m)')
+		ax.set_zlabel('Z Position (m)')
+		ax.set_xlim(min_bounds[0], max_bounds[0])
+		ax.set_ylim(min_bounds[1], max_bounds[1])
+		ax.set_zlim(min_bounds[2], max_bounds[2])
+		ax.set_title('3D Trajectories of Atoms')
+		ax.legend()
+		plt.show()
 
 
 if __name__ == '__main__':
@@ -701,26 +801,28 @@ if __name__ == '__main__':
 
 
 
-	images, metadata = getImagesFrom_h5_files("blurs/")
-	z = np.array([val['zAtom'] for val in metadata.values()])
-	ordered = np.argsort(z)
-	images = np.array(images)[ordered]
-	z = z[ordered]
-	zmin, zmax = z[0], z[-1]
-	zstep = z[1] - z[0]
-	xymin = -np.mean([val['range'] for val in metadata.values()])/2
-	xymax = -xymin
-	xystep = (xymax-xymin)/images.shape[1]
-	images = np.abs(images)**2
-	def getFromImages(x,y,z):
-		z = ((z-zmin)/(zmax-zmin) * (len(images)-1)).astype(int)
-		x = ((x-xymin)/(xymax-xymin) * (len(images[0])-1)).astype(int)
-		y = ((y-xymin)/(xymax-xymin) * (len(images[0][0])-1)).astype(int)
-		return images[z,x,y]
-	# plot2D_function(lambda x,z: getFromImages(x,0,z), [xymin,xymax], [zmin,zmax], len(images[0]), len(images))
-	f = randExtractor.distribFunFromPDF_2D_1D(getFromImages, [[xymin,xymax],[xymin,xymax],[zmin,zmax]], [xystep,xystep,zstep])
-	z = np.repeat(0,1000)
-	xy=f(np.zeros((len(z),2)), z)
-	plt.scatter(xy[:,0],xy[:,1], alpha=.03)
-	plt.show()
+	# images, metadata = getImagesFrom_h5_files("blurs/")
+	# z = np.array([val['zAtom'] for val in metadata.values()])
+	# ordered = np.argsort(z)
+	# images = np.array(images)[ordered]
+	# z = z[ordered]
+	# zmin, zmax = z[0], z[-1]
+	# zstep = z[1] - z[0]
+	# xymin = -np.mean([val['range'] for val in metadata.values()])/2
+	# xymax = -xymin
+	# xystep = (xymax-xymin)/images.shape[1]
+	# images = np.abs(images)**2
+	# def getFromImages(x,y,z):
+	# 	z = ((z-zmin)/(zmax-zmin) * (len(images)-1)).astype(int)
+	# 	x = ((x-xymin)/(xymax-xymin) * (len(images[0])-1)).astype(int)
+	# 	y = ((y-xymin)/(xymax-xymin) * (len(images[0][0])-1)).astype(int)
+	# 	return images[z,x,y]
+	# # plot2D_function(lambda x,z: getFromImages(x,0,z), [xymin,xymax], [zmin,zmax], len(images[0]), len(images))
+	# f = randExtractor.distribFunFromPDF_2D_1D(getFromImages, [[xymin,xymax],[xymin,xymax],[zmin,zmax]], [xystep,xystep,zstep])
+	# z = np.repeat(0,1000)
+	# xy=f(np.zeros((len(z),2)), z)
+	# plt.scatter(xy[:,0],xy[:,1], alpha=.03)
+	# plt.show()
+
+	
 	pass
