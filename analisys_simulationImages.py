@@ -15,30 +15,26 @@ from scipy.stats import norm
 
 
 
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
-from scipy.stats import poisson
+# import numpy as np
+# import matplotlib.pyplot as plt
+# from scipy.optimize import curve_fit
+# from scipy.stats import poisson
 
-repetitions = 5000
-scattRate = 3
-dt=.00001
-totalTime = 1
-nSteps = int(totalTime // dt)
-oldNumScatter = np.sum(np.random.random((nSteps, repetitions))<scattRate*dt, axis=0)
+# repetitions = 5000
+# scattRate = 3
+# dt=.00001
+# totalTime = 1
+# nSteps = int(totalTime // dt)
+# oldNumScatter = np.sum(np.random.random((nSteps, repetitions))<scattRate*dt, axis=0)
 
-newTimings = np.random.exponential(1/scattRate, (nSteps,repetitions))
-newTimings = np.cumsum(newTimings, axis=0)
-newNumScatter = np.sum(newTimings<totalTime, axis=0)
+# newTimings = np.random.exponential(1/scattRate, (nSteps,repetitions))
+# newTimings = np.cumsum(newTimings, axis=0)
+# newNumScatter = np.sum(newTimings<totalTime, axis=0)
 
-plt.plot(*np.unique(oldNumScatter, return_counts=True), alpha=0.5, label='Old Method')
-plt.plot(*np.unique(newNumScatter, return_counts=True), alpha=0.5, label='New Method')
-plt.legend()
-plt.show()
-
-
-
-
+# plt.plot(*np.unique(oldNumScatter, return_counts=True), alpha=0.5, label='Old Method')
+# plt.plot(*np.unique(newNumScatter, return_counts=True), alpha=0.5, label='New Method')
+# plt.legend()
+# plt.show()
 
 
 def Gauss(x, A, B, C):
@@ -84,7 +80,7 @@ def getAverageCrossSection(image, tweezerMinPixelDistance = 10, atomPeakMinValue
 
 
 
-imgs, metadata = Camera.getImagesFrom_h5_files("D:/simulationImages/10us_smallImages/pictures/")
+imgs, metadata = Camera.getImagesFrom_h5_files("D:/simulationImages/10us_smallImages/pictures/testing tweezer")
 imgs = np.array(imgs)
 
 '''average image'''

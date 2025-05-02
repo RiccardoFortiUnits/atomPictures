@@ -122,7 +122,7 @@ def load_h5_image(path, returnMetadata = False):
 	return image
 def getImagesFrom_h5_files(folderPath):
 	'''
-		gets an image that is the average of all the images contained in folderPath.
+		gets all the images contained in folderPath.
 		also returns a dictionary {fileName:metadata} of all the metadata contained in the files
 	'''
 	files = [f for f in os.listdir(folderPath) if f.endswith('.h5')]
@@ -608,14 +608,22 @@ class experimentViewer:
 			f.create_dataset("lastPositons", data = self.lastPositons)
 			f.create_dataset("lastHits", data = np.array(self.lastHits))
 			f.create_dataset("lastGeneratedPhotons", data = self.lastGeneratedPhotons)
+			f.create_dataset("lastTimings", data = self.lastTimings)
 			f.attrs.update(metadata)
+
+	@property
+	def hasHits(self):
+		return len(self.lastHits) > 0
 
 	def loadAcquisition(self, fileName):        
 		with h5py.File(fileName, 'r') as f:
 			self.lastPositons = np.array(f['lastPositons'])
 			self.lastHits = np.array(f['lastHits'])
-			self.lastHits = (self.lastHits[0], self.lastHits[1], self.lastHits[2])
+			if self.hasHits:
+				self.lastHits = (self.lastHits[0], self.lastHits[1], self.lastHits[2])
 			self.lastGeneratedPhotons = np.array(f['lastGeneratedPhotons'])
+			if 'lastTimings' in f.keys():
+				self.lastTimings = np.array(f['lastTimings'])
 			metadata = dict(f.attrs)
 			return metadata
 		
@@ -634,21 +642,22 @@ class experimentViewer:
 		for atom_idx in range(self.lastPositons.shape[1]):
 			ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
 			ax.scatter(self.lastPositons[0, atom_idx, 0], self.lastPositons[0, atom_idx, 1], self.lastPositons[0, atom_idx, 2])
-		for laser_idx in range(np.max(self.lastHits[2])+1):
-			laserHits = np.where(self.lastHits[2] == laser_idx)[0]
-			if len(laserHits) > 0:
-				time_idx = self.lastHits[0][laserHits]
-				atom_idx = self.lastHits[1][laserHits]
-				ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
-						   label=f'laser {laser_idx+1} hits', s=5)
-				for h in range(len(laserHits)):
-					position = self.lastPositons[time_idx[h], atom_idx[h]]
-					directions = self.lastGeneratedPhotons[laserHits[h]] * baseQuiverLength
-					isAHit = hitCamera[laserHits[h]]
-					if isAHit:
-						ax.quiver(position[0], position[1], position[2], 
-									directions[0], directions[1], directions[2], color='red')
-						# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
+		if self.hasHits:
+			for laser_idx in range(np.max(self.lastHits[2])+1):
+				laserHits = np.where(self.lastHits[2] == laser_idx)[0]
+				if len(laserHits) > 0:
+					time_idx = self.lastHits[0][laserHits]
+					atom_idx = self.lastHits[1][laserHits]
+					ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
+							label=f'laser {laser_idx+1} hits', s=5)
+					for h in range(len(laserHits)):
+						position = self.lastPositons[time_idx[h], atom_idx[h]]
+						directions = self.lastGeneratedPhotons[laserHits[h]] * baseQuiverLength
+						isAHit = hitCamera[laserHits[h]]
+						if isAHit:
+							ax.quiver(position[0], position[1], position[2], 
+										directions[0], directions[1], directions[2], color='red')
+							# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
 				
 		ax.set_xlabel('X Position (m)')
 		ax.set_ylabel('Y Position (m)')
@@ -672,19 +681,20 @@ class experimentViewer:
 		for atom_idx in range(self.lastPositons.shape[1]):
 			ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
 			ax.scatter(self.lastPositons[0, atom_idx, 0], self.lastPositons[0, atom_idx, 1], self.lastPositons[0, atom_idx, 2])
-		for laser_idx in range(np.max(self.lastHits[2])+1):
-			laserHits = np.where(self.lastHits[2] == laser_idx)[0]
-			if len(laserHits) > 0:
-				time_idx = self.lastHits[0][laserHits]
-				atom_idx = self.lastHits[1][laserHits]
-				ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
-						   label=f'laser {laser_idx+1} hits', s=5)
-				for h in range(len(laserHits)):
-					position = self.lastPositons[time_idx[h], atom_idx[h]]
-					directions = self.lastGeneratedPhotons[laserHits[h]] * quiverLength
-					ax.quiver(position[0], position[1], position[2], 
-							  directions[0], directions[1], directions[2], color='red')
-				# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
+		if self.hasHits:
+			for laser_idx in range(np.max(self.lastHits[2])+1):
+				laserHits = np.where(self.lastHits[2] == laser_idx)[0]
+				if len(laserHits) > 0:
+					time_idx = self.lastHits[0][laserHits]
+					atom_idx = self.lastHits[1][laserHits]
+					ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
+							label=f'laser {laser_idx+1} hits', s=5)
+					for h in range(len(laserHits)):
+						position = self.lastPositons[time_idx[h], atom_idx[h]]
+						directions = self.lastGeneratedPhotons[laserHits[h]] * quiverLength
+						ax.quiver(position[0], position[1], position[2], 
+								directions[0], directions[1], directions[2], color='red')
+					# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
 				
 		ax.set_xlabel('X Position (m)')
 		ax.set_ylabel('Y Position (m)')

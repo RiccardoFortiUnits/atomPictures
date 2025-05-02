@@ -217,8 +217,8 @@ for i,z in enumerate(zAtom):
 		U_afterLens0 = passThroughLens(U_beforeLens0, k, f0, R0)
 
 		U_beforeLens1 = expandInFreeSpace(U_afterLens0,[[-R0,R0],[-R0,R0]],zLens0,k)
-		# plot2D_function(addStaticY(U_beforeLens1,0), [0,R0*1.1],[zLens0 + .5*f1, zLens0 + 1.5*f1],20,20, "U_beforeLens1_xz")
-		# plot2D_function(addStaticZ(U_beforeLens1,zLens1), [0,R0*1.1],[0,R0*1.1],20,20, "U_beforeLens1_xy")
+		plot2D_function(addStaticY(U_beforeLens1,0), [0,R0*1.1],[zLens0 + .5*f1, zLens0 + 1.5*f1],20,20, "U_beforeLens1_xz")
+		plot2D_function(addStaticZ(U_beforeLens1,zLens1), [0,R0*1.1],[0,R0*1.1],20,20, "U_beforeLens1_xy")
 
 		mappedFun_beforeLens1 = mappedFunction(addStaticZ(U_beforeLens1,zLens1), np.array([0,0]), np.repeat(range_beforeLens1, 2), np.repeat(resolution,2))
 		U_beforeLens1_calculated = mappedFun_beforeLens1(mappedFun_beforeLens1.getXY())

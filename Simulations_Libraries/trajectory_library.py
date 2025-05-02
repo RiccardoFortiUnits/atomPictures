@@ -52,6 +52,29 @@ gJ_1S0_3P1 = 1.493
 
 TOTAL_LENGTH = 37*10**-2 # Length of the system bewteen end of AoSense and center of the glass cell
 
+def Rayleigh_range(waist, wavelenght):
+	return np.pi*waist**2/wavelenght
+
+def omega_r (U_0, waist, A : Atom): # radial trap frequency
+	return np.sqrt(4 * U_0 / (A.m * waist**2)) 
+
+def omega_z (U_0, z_R, A : Atom): # axial trap frequency
+	return np.sqrt(2 * U_0 / (A.m * z_R**2))  
+
+def real_t_ill(t_ill):
+	"""
+	Compute the real illuminaiton time (in s) considering the alternating pulses.
+	"""
+	return np.ceil((t_ill)/(900e-9))*900e-9*8/9 # s  this time is calculated considering what our pulsed imaging is actually doing
+
+def n_T (omega,T):
+	"""
+	Average harmonic oscillator occupation number for atoms at temperature T
+	"""
+	return 1/(np.exp(hbar*omega/(kB*T))-1)
+
+def zeta_dependence(z,waist,wavelength):
+	return 1+(wavelength*z/(np.pi*waist**2))**2
 
 class Atom:
 	c = const.physical_constants["speed of light in vacuum"][0]
@@ -1065,6 +1088,10 @@ class experiment(experimentViewer):
 		a.velocity += impulseForce_beforeDt + self.force(a) * dt
 		a.position += a.velocity * dt
 		a.velocity += impulseForce_afterDt
+		
+		# print(f"___{dt}")
+		# print(a.velocity)
+		# print(a.position)
 	@property
 	def initialAtomPositions(self):
 		l = np.zeros((len(self.atoms), 3))
@@ -1127,14 +1154,16 @@ class experiment(experimentViewer):
 			positions = []
 			generatedPhotons = []
 			hittingTime = np.zeros(len(self.lasers))
-			excitedTime = 0
+			# excitedTime = 0
 			while t < time:
 				timings.append(t)
 				positions.append(A.position)
 				# assume the atom would experience the same fields if it doesn't move too much and if not too much time passes (But we'll have to still consider gravity)
 				timeToReachMax_dx = max_dx / np.linalg.norm(A.velocity) if np.linalg.norm(A.velocity) > 0 else np.inf
 				maxT = np.maximum(np.minimum(max_dt, timeToReachMax_dx), min_dt)
-				if excitedTime <= 0:#are we in the ground state?
+				if maxT == min_dt:
+					maxT += 0
+				if True: #excitedTime <= 0:#are we in the ground state?
 					#let's check if the atom would be hit by a laser during the time step
 					for i, laser in enumerate(electricalFields):
 						#extract the random times at which each laser would hit the atom
@@ -1143,29 +1172,17 @@ class experiment(experimentViewer):
 					hittingLaserIdx = np.argmin(hittingTime)
 					if hittingTime[hittingLaserIdx] < maxT:#would it hit the atom during the considered time?
 						hitTime = hittingTime[hittingLaserIdx]
-						self.nextPointInTrajectory(A, hitTime, impulseForce_afterDt = hbar*self.lasers[hittingLaserIdx].k/A.m)
+						generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[0].Lambda,A.m)
+						self.nextPointInTrajectory(A, hitTime, impulseForce_afterDt = hbar*self.lasers[hittingLaserIdx].k/A.m - generatedPhotonKick)
 						t+=hitTime
 
-						excitedTime = np.random.exponential(1/A.transitions[0].Gamma)
+						hits.append([len(timings)-1, a_idx, hittingLaserIdx])
+						generatedPhotons.append(generatedPhotonKick / np.linalg.norm(generatedPhotonKick))
+						# excitedTime = np.random.exponential(1/A.transitions[0].Gamma)
 					else:
 						#no hit, let's increment the timer
 						self.nextPointInTrajectory(A, maxT)
 						t += maxT
-				elif maxT > excitedTime:#would we finish the excited state before the next hit?
-					generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[0].Lambda,A.m)
-					self.nextPointInTrajectory(A, excitedTime, impulseForce_afterDt = -generatedPhotonKick)
-					t+=excitedTime
-					excitedTime = 0
-
-
-					hits.append([len(timings)-1, a_idx, hittingLaserIdx])
-					generatedPhotons.append(generatedPhotonKick / np.linalg.norm(generatedPhotonKick))
-
-				else:
-					#let's just increment the timer
-					excitedTime -= maxT
-					self.nextPointInTrajectory(A, maxT)
-					t += maxT
 
 			tot_timings.append(np.array(timings))
 			tot_positions.append(np.array(positions))
@@ -1188,8 +1205,12 @@ class experiment(experimentViewer):
 	# lastGeneratedPhotons:   array[nOfHits][3] the generated photons for each hit
 
 	def getScatteredPhotons(self):
-		startPositions = self.lastPositons[self.lastHits[:-1]]
-		directions = self.lastGeneratedPhotons
+		if self.hasHits:
+			startPositions = self.lastPositons[self.lastHits[:-1]]
+			directions = self.lastGeneratedPhotons
+		else:
+			startPositions = np.zeros((0,3))
+			directions = np.zeros((0,3))
 		return startPositions, directions
 	
 
