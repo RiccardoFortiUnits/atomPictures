@@ -60,7 +60,7 @@ impulseDuration = 400e-9
 experimentDuration = 10e-6 #2-50us
 
 '''-------------------------------pixels------------------------------'''
-nPixels = 20
+nPixels = np.array([20,100])
 pixelSize = 4.6e-6
 cameraSize = pixelSize*nPixels
 lensDistance = 25.5e-3
@@ -95,9 +95,8 @@ def elasticForceFromTweezer(a : trajlib.Atom, *args):
 
 G = Camera.blurFromImages(blurFolder)
 #'''
-magnificationGrid = pixelGrid(cameraSize,cameraSize,nPixels,nPixels, lambda xy, z: G(xy, z - lensDistance))
-# quantumEfficiencyGrid = pixelGrid(cameraSize,cameraSize,nPixels,nPixels, randExtractor.randomLosts(0.1))
-quantumEfficiencyGrid = refreshing_cMosGrid(cameraSize,cameraSize,nPixels,nPixels, randExtractor.randomLosts(0.1), "Orca_testing/shots/", imageStart = (10,10), imageSizes = (-10,-10))
+magnificationGrid = pixelGrid(cameraSize[0],cameraSize[1],nPixels[0],nPixels[1], lambda xy, z: G(xy, z - lensDistance))
+quantumEfficiencyGrid = refreshing_cMosGrid(cameraSize[0],cameraSize[1],nPixels[0],nPixels[1], randExtractor.randomLosts(0.1), "Orca_testing/shots/", imageStart = (10,10), imageSizes = (-10,-10))
 c = Camera(position=(0,0,lensDistance), 
         orientation=(0,-np.pi/2,0), 
         radius=16e-3,
@@ -115,12 +114,13 @@ for repeat in range(500):
     if not os.path.exists(simulationFileName):
 
         for i in range(nOfAtoms):
-            tweezerPosition = np.random.random(3)*np.array([-pixelSize,pixelSize,0])
-            atomPosition = tweezerPosition + np.concatenate((np.random.normal(pixelSize/2, radius_rms, 2),np.random.normal(0, z_rms, 1)))
-            atomVelocity = np.concatenate((np.random.normal(0, v_r_rms, 2),np.random.normal(0, v_z_rms, 1)))
-            newAtom = trajlib.Ytterbium(*atomPosition, *atomVelocity, isotope=isotope)
-            newAtom.tweezerPosition = tweezerPosition
-            exp.add_atom(newAtom)
+            if np.random.rand()>.5:
+                tweezerPosition = np.random.random(3)*np.array([-pixelSize,pixelSize,0]) + np.array([i*pixelSize*10-cameraSize[1]/2+pixelSize*5,i*pixelSize*.5-pixelSize*5,0])
+                atomPosition = tweezerPosition + np.concatenate((np.random.normal(pixelSize/2, radius_rms, 2),np.random.normal(0, z_rms, 1)))
+                atomVelocity = np.concatenate((np.random.normal(0, v_r_rms, 2),np.random.normal(0, v_z_rms, 1)))
+                newAtom = trajlib.Ytterbium(*atomPosition, *atomVelocity, isotope=isotope)
+                newAtom.tweezerPosition = tweezerPosition
+                exp.add_atom(newAtom)
             # exp.add_atom(trajlib.Ytterbium(0,0,0, 0,0,0,isotope=174))
         b = trajlib.Laser(0,0, Lambda, imgPower, (imgWaist/2,imgWaist/2), switchingTimes =      [-impulseDuration / 2, impulseDuration, impulseDuration])
         b1 = trajlib.Laser(np.pi,0, Lambda, imgPower, (imgWaist/2,imgWaist/2), switchingTimes = [ impulseDuration / 2, impulseDuration, impulseDuration])

@@ -10,6 +10,9 @@ import os
 from scipy import integrate
 from functools import partial
 import inspect
+from scipy.optimize import curve_fit
+from scipy.ndimage import maximum_filter
+
 def plot2D(Z, x_range, y_range, figureTitle=""):
 	if Z.dtype == np.complex128:
 		plt.figure(figureTitle + " (abs value)")
@@ -142,6 +145,96 @@ def getImagesFrom_h5_files(folderPath):
 
 '''---------------------------------------------------------------------------------'''
 
+class cameraAtomImages:
+	@staticmethod
+	def Gauss(x, A, B, C):
+		y = A*np.exp(-1*B*(x-C)**2)
+		return y
+	@staticmethod
+	def findCenterOfGaussianSignal(signal):
+		parameters, _ = curve_fit(cameraAtomImages.Gauss, np.arange(0,len(signal)), signal, p0=[1, 1, np.argmax(np.abs(signal))])
+		return parameters[2]
+	
+
+
+	def __init__(self, folder):
+		self.folder = folder
+		self.images, self.metadata = getImagesFrom_h5_files(folder)
+		self.images = np.array(self.images)
+
+	def averageImage(self):
+		average = np.mean(self.images, axis = 0)
+		return average
+	
+	def calcTweezerPositions(self, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
+		image = self.averageImage()        
+		maxes = maximum_filter(image, size=tweezerMinPixelDistance)
+		pixelCenters = np.array(np.where(np.logical_and((maxes == image), (image > atomPeakMinValue))))
+		#let's find the actual center by fitting a gaussian on the roi
+		centers = pixelCenters - np.repeat(tweezerMinPixelDistance//2.,2)[:,None]
+		for i, center in enumerate(pixelCenters.T):
+			corner = center - np.repeat(tweezerMinPixelDistance//2,2)
+			for axis in [0,1]:
+				section =	image[corner[0]:corner[0]+tweezerMinPixelDistance, center[1]] if axis == 0 else \
+							image[center[0], corner[1]:corner[1]+tweezerMinPixelDistance]
+				
+				centers[axis,i] += cameraAtomImages.findCenterOfGaussianSignal(section)
+				
+		self.__tweezerPositions = centers
+		self.__tweezerPixels = pixelCenters
+
+	@property
+	def tweezerPositions(self):
+		if not hasattr(self, "__tweezerPositions"):
+			self.calcTweezerPositions()
+		return self.__tweezerPositions
+	@property
+	def tweezerPixels(self):
+		if not hasattr(self, "__tweezerPixels"):
+			self.calcTweezerPositions()
+		return self.__tweezerPixels
+	
+	def getTrappedAtoms(self, photonThreshold, roi = 3):
+		'''returns a nImg * nTweezers boolean array, where element [i,j] states if the trap j of image i is filled or not'''
+		corners = self.tweezerPixels - np.repeat(roi//2,2)[:,None]
+		trappedAtoms = np.zeros((len(self.images), len(corners)), dtype=bool)
+		for i,corner in enumerate(corners.T):
+			atomsPerRoi = np.sum(self.images[:,corner[0]:corner[0]+roi,corner[1]:corner[1]+roi], axis=(1,2))
+			trappedAtoms[:,i] = atomsPerRoi >= photonThreshold
+		return trappedAtoms
+	
+	def getTweezerImage(self, roi, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
+		'''returns a boolean image that is True where the roi of an atom should be'''
+		img = np.zeros_like(self.images[0], dtype=bool)
+		self.calcTweezerPositions(tweezerMinPixelDistance, atomPeakMinValue)
+		corners = self.tweezerPixels - np.repeat(roi//2,2)[:,None]
+		for corner in corners.T:
+			img[corner[0]:corner[0]+roi, corner[1]:corner[1]+roi] = True
+		return img
+
+	
+
+class doubleCameraAtomImage:
+	def __init__(self,firstPath, secondPath):
+		self.first = cameraAtomImages(firstPath)
+		self.second = cameraAtomImages(secondPath)
+	
+	def calcTweezerPositions(self, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
+		self.first.calcTweezerPositions(tweezerMinPixelDistance, atomPeakMinValue)
+		self.second.calcTweezerPositions(tweezerMinPixelDistance, atomPeakMinValue)
+
+	def getTrappedAtomBehaviour(self, photonThreshold, roi = 3):
+		'''returns a nImg * nTweezers int array, where element [i,j] states the "filling transition" of the tweezer j of image i.
+		For example, trappAtomBehav[i,j] = 2 = 0b10, => the tweezer was filled in the first image, and empty in the second'''
+		a0 = self.first.getTrappedAtoms(photonThreshold, roi)
+		a1 = self.second.getTrappedAtoms(photonThreshold, roi)
+		return a0.astype(int) << 1 | a1.astype(int)
+	
+	def getSurelyTrappedAtoms(self, photonThreshold, roi = 3):
+		trappAtomBehav = self.getTrappedAtomBehaviour(photonThreshold, roi)
+		return trappAtomBehav == 0b11
+'''---------------------------------------------------------------------------------'''
+
 class pixelGrid:
 	def __init__(self, xsize,ysize,nofXpixels,nofYpixels, PSF, magnification = 1):
 		#let's always work with the center of the grid being addressed as (0,0), so that it's easier to change from grid to grid
@@ -254,6 +347,7 @@ class cMosGrid(pixelGrid):
 			
 			raw_images[i] = img[imageStart[0]:imageStart[0] + imageSizes[0], imageStart[1]:imageStart[1] + imageSizes[1]].astype(np.uint8)
 		return raw_images#so we won't occupy too much memory (we'll still occupy a lot though)
+	@staticmethod
 	def getRandomPixelNoises(nOfPixels, path, imageStart = (0,0), imageSizes = None):
 		images = cMosGrid.getPictures(path, imageStart, imageSizes)
 		pixels = images.reshape((images.shape[0], -1)).T
@@ -275,6 +369,21 @@ class refreshing_cMosGrid(cMosGrid):
 	def addNoise(self):
 		self.pixels += np.random.choice(self.pixelNoises, self.pixels.shape, )
 
+class strayLight_cMosGrid(refreshing_cMosGrid):
+	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, avoidanceRoi = 5, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
+		pixelGrid.__init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF)
+		self.setRandomPixelNoises(noisePictureFilePath, avoidanceRoi, tweezerMinPixelDistance, atomPeakMinValue)
+
+	def setRandomPixelNoises(self, noisePictureFilePath, avoidanceRoi = 5, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
+		self.pixelNoises = strayLight_cMosGrid.getRandomPixelNoises(noisePictureFilePath, avoidanceRoi, tweezerMinPixelDistance, atomPeakMinValue)
+	
+	@staticmethod
+	def getRandomPixelNoises(path, avoidanceRoi = 5, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
+		cai = cameraAtomImages(path)
+		emptyPixels = ~ cai.getTweezerImage(avoidanceRoi, tweezerMinPixelDistance, atomPeakMinValue)
+		images = cai.images.reshape((len(cai.images),-1))
+		images = images[:,emptyPixels.flatten()]
+		return images.flatten()
 
 class Camera:
 	def __init__(self, position, orientation, radius, pixelGrids: Union[Tuple[pixelGrid], List[pixelGrid], pixelGrid], focusDistance=None):
@@ -834,5 +943,18 @@ if __name__ == '__main__':
 	# plt.scatter(xy[:,0],xy[:,1], alpha=.03)
 	# plt.show()
 
+	# cai = cameraAtomImages("D:/simulationImages/fakeAtomArray/pictures")
+	# cai.calcTweezerPositions(5,3)
+	# # plt.imshow(cai.averageImage())
+	# # plt.show()
+	# plt.imshow(cai.getTweezerImage(3))
+	# plt.show()
 	
+	grid = strayLight_cMosGrid(20,20,20,20,lambda x:x, "D:/simulationImages/fakeAtomArray/pictures/", 5, 5, 3)
+	for i in range(10):
+		grid.fillFromLens(np.zeros((0,2)))
+		plt.imshow(grid.pixels)
+		plt.show()
+		grid.clear()
+
 	pass
