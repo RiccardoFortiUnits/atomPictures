@@ -78,10 +78,14 @@ def getAverageCrossSection(image, tweezerMinPixelDistance = 10, atomPeakMinValue
 
 
 
-
-
-imgs, metadata = Camera.getImagesFrom_h5_files("D:/simulationImages/10us_smallImages/pictures/testing tweezer")
+'''
+cai = Camera.doubleCameraAtomImage("D:/simulationImages/real images/smallerSet - 171_10Tweezer_inTrap_7us_2Images", "D:/simulationImages/real images/smallerSet - 171_10Tweezer_inTrap_7us_2Images", "images/Orca/fluorescence 1/frame", "images/Orca/fluorescence 2/frame")
+cai.calcTweezerPositions()
+imgs = cai.first.getAtomROI_fromBooleanArray(7, cai.getSurelyTrappedAtoms(8, 3))
+'''
+imgs, metadata = Camera.getImagesFrom_h5_files("D:/simulationImages/Yt171_7us/pictures/")
 imgs = np.array(imgs)
+#'''
 
 '''average image'''
 average = np.mean(imgs, axis = 0)
@@ -104,6 +108,7 @@ plt.show()
 for signal, direction in zip([average[:,average.shape[1]//2], average[average.shape[0]//2,:]], ["x","y"]):
     x,signal, parameters = get_xyFromSignal(signal, returnParamters=True)
     plt.plot(x, signal, label=direction)
+    x=np.linspace(x[0],x[-1],len(x)*10)
     plt.plot(x, Gauss(x,*parameters), label=f"fit {direction}")
 
 plt.legend()
@@ -123,7 +128,12 @@ atomPixels = np.array([(atomPosition[0]+halfImageSize) / pixelSize,
 atomPixels = imgs[:,atomPixels[0]:atomPixels[0]+roi,atomPixels[1]:atomPixels[1]+roi]
 photonsInRoi = np.sum(atomPixels, axis=(1,2))
 
-plt.hist(photonsInRoi, bins=int(np.max(photonsInRoi)-np.min(photonsInRoi)))
+plt.hist(photonsInRoi, bins=int(np.max(photonsInRoi)-np.min(photonsInRoi)+1), label="photons in ROI")
+
+unique, counts = np.unique(photonsInRoi, return_counts=True)
+params, _ = curve_fit(poisson.pmf, unique, counts / len(photonsInRoi), p0=[np.mean(photonsInRoi)])
+plt.plot(unique, len(photonsInRoi) * poisson.pmf(unique, *params), label=f'Poisson fit (mean = {params[0]})')
+plt.legend()
 plt.show()
 
 '''comparison with experimental images'''

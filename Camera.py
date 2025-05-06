@@ -123,7 +123,7 @@ def load_h5_image(path, returnMetadata = False):
 			return image, metadata
 
 	return image
-def getImagesFrom_h5_files(folderPath):
+def getImagesFrom_h5_files(folderPath, internalPath = None):
 	'''
 		gets all the images contained in folderPath.
 		also returns a dictionary {fileName:metadata} of all the metadata contained in the files
@@ -137,7 +137,10 @@ def getImagesFrom_h5_files(folderPath):
 
 	for file in files:
 		with h5py.File(os.path.join(folderPath, file), 'r') as f:
-			image = np.array(f['image'])
+			if internalPath is None:
+				image = np.array(f['image'])
+			else:
+				image = np.array(f[internalPath])
 			images.append(image)
 			metadata[file] = dict(f.attrs)
 
@@ -151,34 +154,47 @@ class cameraAtomImages:
 		y = A*np.exp(-1*B*(x-C)**2)
 		return y
 	@staticmethod
+	def Gauss2D(xy, A, B, Cx, Cy):
+		xy = np.stack((xy[...,0] - Cx, xy[...,1] - Cy), axis = -1)
+		r = np.linalg.norm(xy, axis=-1)
+		return cameraAtomImages.Gauss(r,A,B,0).flatten()
+	@staticmethod
 	def findCenterOfGaussianSignal(signal):
-		parameters, _ = curve_fit(cameraAtomImages.Gauss, np.arange(0,len(signal)), signal, p0=[1, 1, np.argmax(np.abs(signal))])
+		parameters, _ = curve_fit(cameraAtomImages.Gauss, np.arange(0,len(signal)), signal, p0=[np.max(signal), 1, np.argmax(np.abs(signal))])
 		return parameters[2]
+	@staticmethod
+	def findCenterOfGaussianImage(image):
+		x,y = np.meshgrid(*[np.arange(0,image.shape[i]) for i in range(2)])
+		center = np.unravel_index(np.argmax(np.abs(image)), image.shape)
+		parameters, _ = curve_fit(cameraAtomImages.Gauss2D, np.stack((x,y), axis=-1), image.flatten(), p0=[np.max(image), 1, *center])
+		return parameters[2], parameters[3]
 	
 
 
-	def __init__(self, folder):
+	def __init__(self, folder, internalPath = None):
 		self.folder = folder
-		self.images, self.metadata = getImagesFrom_h5_files(folder)
+		self.images, self.metadata = getImagesFrom_h5_files(folder, internalPath)
 		self.images = np.array(self.images)
 
 	def averageImage(self):
 		average = np.mean(self.images, axis = 0)
 		return average
 	
-	def calcTweezerPositions(self, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
-		image = self.averageImage()        
+	def calcTweezerPositions(self, tweezerMinPixelDistance = 10, atomPeakMinValue = 1.8):
+		image = self.averageImage()
 		maxes = maximum_filter(image, size=tweezerMinPixelDistance)
 		pixelCenters = np.array(np.where(np.logical_and((maxes == image), (image > atomPeakMinValue))))
 		#let's find the actual center by fitting a gaussian on the roi
 		centers = pixelCenters - np.repeat(tweezerMinPixelDistance//2.,2)[:,None]
 		for i, center in enumerate(pixelCenters.T):
 			corner = center - np.repeat(tweezerMinPixelDistance//2,2)
-			for axis in [0,1]:
-				section =	image[corner[0]:corner[0]+tweezerMinPixelDistance, center[1]] if axis == 0 else \
-							image[center[0], corner[1]:corner[1]+tweezerMinPixelDistance]
+			# for axis in [0,1]:
+			# 	section =	image[corner[0]:corner[0]+tweezerMinPixelDistance, center[1]] if axis == 0 else \
+			# 				image[center[0], corner[1]:corner[1]+tweezerMinPixelDistance]
 				
-				centers[axis,i] += cameraAtomImages.findCenterOfGaussianSignal(section)
+			# 	centers[axis,i] += cameraAtomImages.findCenterOfGaussianSignal(section)
+			section = image[corner[0]:corner[0]+tweezerMinPixelDistance, corner[1]:corner[1]+tweezerMinPixelDistance]
+			centers[:,i] += np.array(cameraAtomImages.findCenterOfGaussianImage(section))
 				
 		self.__tweezerPositions = centers
 		self.__tweezerPixels = pixelCenters
@@ -197,12 +213,35 @@ class cameraAtomImages:
 	def getTrappedAtoms(self, photonThreshold, roi = 3):
 		'''returns a nImg * nTweezers boolean array, where element [i,j] states if the trap j of image i is filled or not'''
 		corners = self.tweezerPixels - np.repeat(roi//2,2)[:,None]
-		trappedAtoms = np.zeros((len(self.images), len(corners)), dtype=bool)
+		trappedAtoms = np.zeros((len(self.images), len(corners.T)), dtype=bool)
 		for i,corner in enumerate(corners.T):
 			atomsPerRoi = np.sum(self.images[:,corner[0]:corner[0]+roi,corner[1]:corner[1]+roi], axis=(1,2))
 			trappedAtoms[:,i] = atomsPerRoi >= photonThreshold
 		return trappedAtoms
 	
+	def getAtomROI(self, roi, imageIdx = None, atomIdx = None):
+		'''if imageIdx and/or atomIdx not specified, all the possible indexes will be considered, and imageIdx and atomIdx will be meshed together, to obtain all the combinations of index couples'''
+		mesh = False
+		if imageIdx is None:
+			imageIdx = np.arange(0, len(self.images))
+			mesh = True
+		if atomIdx is None:
+			atomIdx = np.arange(0, len(self.tweezerPixels.T))
+			mesh = True
+		if mesh:
+			imageIdx, atomIdx = np.meshgrid(imageIdx, atomIdx)
+			imageIdx = imageIdx.flatten()
+			atomIdx = atomIdx.flatten()
+		corners = self.tweezerPixels - np.repeat(roi//2,2)[:,None]
+		corners = corners[:, atomIdx]
+		return self.images[imageIdx[:,None,None],
+					 np.round(np.linspace(corners[0],corners[0]+roi-1, roi)).T.astype(int)[:,:,None],
+					 np.round(np.linspace(corners[1],corners[1]+roi-1, roi)).T.astype(int)[:,None,:]]
+
+
+	def getAtomROI_fromBooleanArray(self, roi, array):
+		imgs, atoms = np.where(array)
+		return self.getAtomROI(roi, imgs, atoms)
 	def getTweezerImage(self, roi, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
 		'''returns a boolean image that is True where the roi of an atom should be'''
 		img = np.zeros_like(self.images[0], dtype=bool)
@@ -215,11 +254,11 @@ class cameraAtomImages:
 	
 
 class doubleCameraAtomImage:
-	def __init__(self,firstPath, secondPath):
-		self.first = cameraAtomImages(firstPath)
-		self.second = cameraAtomImages(secondPath)
+	def __init__(self,firstPath, secondPath, firstInternalPath = None, secondInternalPath = None):
+		self.first = cameraAtomImages(firstPath, firstInternalPath)
+		self.second = cameraAtomImages(secondPath, secondInternalPath)
 	
-	def calcTweezerPositions(self, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
+	def calcTweezerPositions(self, tweezerMinPixelDistance = 10, atomPeakMinValue = 1.8):
 		self.first.calcTweezerPositions(tweezerMinPixelDistance, atomPeakMinValue)
 		self.second.calcTweezerPositions(tweezerMinPixelDistance, atomPeakMinValue)
 
@@ -230,7 +269,7 @@ class doubleCameraAtomImage:
 		a1 = self.second.getTrappedAtoms(photonThreshold, roi)
 		return a0.astype(int) << 1 | a1.astype(int)
 	
-	def getSurelyTrappedAtoms(self, photonThreshold, roi = 3):
+	def getSurelyTrappedAtoms(self, photonThreshold = 10, roi = 3):
 		trappAtomBehav = self.getTrappedAtomBehaviour(photonThreshold, roi)
 		return trappAtomBehav == 0b11
 '''---------------------------------------------------------------------------------'''
@@ -718,6 +757,8 @@ class experimentViewer:
 			f.create_dataset("lastHits", data = np.array(self.lastHits))
 			f.create_dataset("lastGeneratedPhotons", data = self.lastGeneratedPhotons)
 			f.create_dataset("lastTimings", data = self.lastTimings)
+			if hasattr(self, "tweezerPositions"):
+				f.create_dataset("tweezerPositions", data = self.tweezerPositions)
 			f.attrs.update(metadata)
 
 	@property
@@ -733,6 +774,8 @@ class experimentViewer:
 			self.lastGeneratedPhotons = np.array(f['lastGeneratedPhotons'])
 			if 'lastTimings' in f.keys():
 				self.lastTimings = np.array(f['lastTimings'])
+			if 'tweezerPositions' in f.keys():
+				self.tweezerPositions = np.array(f['tweezerPositions'])
 			metadata = dict(f.attrs)
 			return metadata
 		
@@ -789,22 +832,24 @@ class experimentViewer:
 		max_bounds = min_bounds + maxRange
 		for atom_idx in range(self.lastPositons.shape[1]):
 			ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
-			ax.scatter(self.lastPositons[0, atom_idx, 0], self.lastPositons[0, atom_idx, 1], self.lastPositons[0, atom_idx, 2])
-		if self.hasHits:
-			for laser_idx in range(np.max(self.lastHits[2])+1):
-				laserHits = np.where(self.lastHits[2] == laser_idx)[0]
-				if len(laserHits) > 0:
-					time_idx = self.lastHits[0][laserHits]
-					atom_idx = self.lastHits[1][laserHits]
-					ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
-							label=f'laser {laser_idx+1} hits', s=5)
-					for h in range(len(laserHits)):
-						position = self.lastPositons[time_idx[h], atom_idx[h]]
-						directions = self.lastGeneratedPhotons[laserHits[h]] * quiverLength
-						ax.quiver(position[0], position[1], position[2], 
-								directions[0], directions[1], directions[2], color='red')
+			ax.scatter(*self.lastPositons[0, atom_idx, :], s=20)
+			if hasattr (self, "tweezerPositions"):
+				ax.scatter(*self.tweezerPositions[atom_idx], s=30, color=plt.gca().lines[-1].get_color())
+		# if self.hasHits:
+		# 	for laser_idx in range(np.max(self.lastHits[2])+1):
+		# 		laserHits = np.where(self.lastHits[2] == laser_idx)[0]
+		# 		if len(laserHits) > 0:
+		# 			time_idx = self.lastHits[0][laserHits]
+		# 			atom_idx = self.lastHits[1][laserHits]
+		# 			ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
+		# 					label=f'laser {laser_idx+1} hits', s=5)
+		# 			for h in range(len(laserHits)):
+		# 				position = self.lastPositons[time_idx[h], atom_idx[h]]
+		# 				directions = self.lastGeneratedPhotons[laserHits[h]] * quiverLength
+		# 				ax.quiver(position[0], position[1], position[2], 
+		# 						directions[0], directions[1], directions[2], color='red')
 					# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
-				
+
 		ax.set_xlabel('X Position (m)')
 		ax.set_ylabel('Y Position (m)')
 		ax.set_zlabel('Z Position (m)')
@@ -950,11 +995,41 @@ if __name__ == '__main__':
 	# plt.imshow(cai.getTweezerImage(3))
 	# plt.show()
 	
-	grid = strayLight_cMosGrid(20,20,20,20,lambda x:x, "D:/simulationImages/fakeAtomArray/pictures/", 5, 5, 3)
-	for i in range(10):
-		grid.fillFromLens(np.zeros((0,2)))
-		plt.imshow(grid.pixels)
-		plt.show()
-		grid.clear()
+	# grid = strayLight_cMosGrid(20,20,20,20,lambda x:x, "D:/simulationImages/fakeAtomArray/pictures/", 5, 5, 3)
+	# for i in range(10):
+	# 	grid.fillFromLens(np.zeros((0,2)))
+	# 	plt.imshow(grid.pixels)
+	# 	plt.show()
+	# 	grid.clear()
+
+
+	# cai = cameraAtomImages("D:/simulationImages/real images/smallerSet - 171_10Tweezer_inTrap_7us_2Images", "images/Orca/fluorescence 1/frame")
+	# cai.calcTweezerPositions()
+
+	# # plt.imshow(cai.averageImage())
+	# # plt.show()
+	# # q = cai.getAtomROI(5, np.array([15,94]),np.array([0,1,2]))
+	# q = cai.getAtomROI_fromBooleanArray(7, cai.getTrappedAtoms(8, 3))
+	# plt.imshow(np.mean(q,axis=0))
+	# plt.show()
+
+	file = "D:/simulationImages/real images/171_10Tweezer_inTrap_12us_2Images"
+	internalPath = [f"images/Orca/fluorescence {i}/frame" for i in [1,2]]
+	cai = doubleCameraAtomImage(file, file, *internalPath)
+	cai.calcTweezerPositions()
+	q = cai.first.getAtomROI(7)
+	plt.imshow(np.mean(q,axis=0))
+	plt.show()
+
+	q = cai.first.getAtomROI_fromBooleanArray(7, cai.first.getTrappedAtoms(8, 3))
+	plt.imshow(np.mean(q,axis=0))
+	plt.show()
+	q = cai.second.getAtomROI_fromBooleanArray(7, cai.second.getTrappedAtoms(8, 3))
+	plt.imshow(np.mean(q,axis=0))
+	plt.show()
+	
+	q = cai.first.getAtomROI_fromBooleanArray(7, cai.getSurelyTrappedAtoms(8, 3))
+	plt.imshow(np.mean(q,axis=0))
+	plt.show()
 
 	pass

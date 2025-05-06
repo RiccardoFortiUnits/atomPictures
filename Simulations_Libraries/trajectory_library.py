@@ -119,7 +119,7 @@ class Ytterbium(Atom):
 	# Initialise ytterbium atoms 
 	Yb_171 = yblib.Yb(171,170.936323,1/2)
 	Yb_173 = yblib.Yb(173,172.938208,5/2)
-	Yb_174 = yblib.Yb(173,173.938859,0)
+	Yb_174 = yblib.Yb(174,173.938859,0)
 
 	def __init__(self, x,y,z,vx,vy,vz, isotope = 174):
 		super().__init__(x, y, z, vx, vy, vz)
@@ -1198,6 +1198,8 @@ class experiment(experimentViewer):
 		self.lastPositons = getTableWithUnevenColumns(tot_positions, np.nan)
 		self.lastHits = tuple(np.array(tot_hits).T)
 		self.lastGeneratedPhotons = np.array(tot_generatedPhotons)
+		if len(self.atoms)> 0 and hasattr(self.atoms[0], "tweezerPosition"):
+			self.tweezerPositions = [a.tweezerPosition for a in self.atoms]
 		return positions
 	
 	# lastPositons:           array[nOfTimes][nOfAtoms][3] positions of each atom at each time frame

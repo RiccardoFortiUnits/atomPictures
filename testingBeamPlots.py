@@ -9,14 +9,9 @@ plt.ion()
 
 showPlots = False
 
-pictureFolder = "D:/simulationImages/10us_smallImages/pictures/"
-simulationFolder = "D:/simulationImages/10us_smallImages/simulation/"
-blurFolder = "blurs/"
-
-
 '''-------------------------------atom------------------------------'''
 nOfAtoms = 1
-isotope = 174
+isotope = 171
 baseAtom = trajlib.Ytterbium(0,0,0, 0,0,0,isotope=isotope)
 detuning = 0#-5.5*trajlib.MHz
 initialT = 15e-6 # initial temperature
@@ -34,45 +29,38 @@ Lambda = trajlib.c/freq
 twzWaist = 540e-9
 twzIntensity = 2.24e-3*trajlib.kB # Tweezer depth in J
 twzLambda = 532e-9 # tweezer wavelength in m
-
-exp_diff_light_shift = 20e6 # Hz/V, measured on 22/01/2025
-light_shift_K = exp_diff_light_shift*trajlib.h/trajlib.kB
-U_1 = twzWaist - light_shift_K*trajlib.kB*0.4 # trap depth 1P1
-
-z_R = trajlib.Rayleigh_range(twzWaist, twzLambda)
-w_r = trajlib.omega_r(twzIntensity, twzWaist, baseAtom)
-w_z = trajlib.omega_z(twzIntensity, z_R, baseAtom)
-n_0 = trajlib.n_T(w_r,initialT)
-radius_rms = np.sqrt(trajlib.hbar/(2*baseAtom.m*w_r)*(2*n_0+1))  # initial RMS position (radial)
-z_rms = np.sqrt(trajlib.hbar/(2*baseAtom.m*w_z)*(2*n_0+1))  # initial RMS position (axial)
-v_r_rms = np.sqrt(trajlib.hbar*w_r/(2*baseAtom.m)*(2*n_0+1))  # initial RMS velocity (radial)
-v_z_rms = np.sqrt(trajlib.hbar*w_z/(2*baseAtom.m)*(2*n_0+1))  # initial RMS velocity (axial)
-
-U_eff = p_g*twzIntensity + p_e*U_1# redefine U0 as an effective trap depth because of different g and e polarizability
-w_r = trajlib.omega_r(U_eff,twzWaist, baseAtom)
-w_z = trajlib.omega_z(U_eff, z_R, baseAtom)
+trapFreq_r = 140e3
+trapFreq_z = 30e3
+n_0 = trajlib.n_T(trapFreq_r,initialT)
+radius_rms = np.sqrt(trajlib.hbar/(2*baseAtom.m*trapFreq_r)*(2*n_0+1))  # initial RMS position (radial)
+z_rms = np.sqrt(trajlib.hbar/(2*baseAtom.m*trapFreq_z)*(2*n_0+1))  # initial RMS position (axial)
+v_r_rms = np.sqrt(trajlib.hbar*trapFreq_r/(2*baseAtom.m)*(2*n_0+1))  # initial RMS velocity (radial)
+v_z_rms = np.sqrt(trajlib.hbar*trapFreq_z/(2*baseAtom.m)*(2*n_0+1))  # initial RMS velocity (axial)
 
 '''-------------------------------timings------------------------------'''
-max_dt = 1e-5
+max_dt = 1e-8
 min_dt = 1e-10
 max_dx = twzWaist / 10
 impulseDuration = 400e-9
-experimentDuration = 10e-6 #2-50us
+experimentDuration = 12e-6 #2-50us
 
 '''-------------------------------pixels------------------------------'''
-nPixels = np.array([20,100])
+nPixels = np.array([20,20])
 pixelSize = 4.6e-6
 cameraSize = pixelSize*nPixels
 lensDistance = 25.5e-3
+
+
+'''-------------------------------folders and files------------------------------'''
+pictureFolder = f"D:/simulationImages/Yt{isotope}_{int(experimentDuration*1e6)}us/pictures/"
+simulationFolder = f"D:/simulationImages/Yt{isotope}_{int(experimentDuration*1e6)}us/simulation/"
+baseFileName = "simulation"
+blurFolder = "blurs/"
 
 if not os.path.exists(pictureFolder):
     os.makedirs(pictureFolder)
 if not os.path.exists(simulationFolder):
     os.makedirs(simulationFolder)
-
-# atomo in trap (add elastic force)
-# (no check exit from trap)
-# residual tra simulazione e dati sperimentali (sia first image after free space che second image after trap) ( chiedi a Sara)
 
 def elasticForceFromTweezer(a : trajlib.Atom, *args):
     x,y,z = a.position - a.tweezerPosition
@@ -83,11 +71,10 @@ def elasticForceFromTweezer(a : trajlib.Atom, *args):
     # a_x = -4*a.X* U_eff/(twzWaist**2*trajlib.zeta_dependence(a.Z,twzWaist,twzLambda)**2)*np.exp(-2*(a.X**2+a.Y**2)/(twzWaist**2*trajlib.zeta_dependence(a.Z,twzWaist,twzLambda)))/a.m
     # a_y = -4*a.Y* U_eff/(twzWaist**2*trajlib.zeta_dependence(a.Z,twzWaist,twzLambda)**2)*np.exp(-2*(a.X**2+a.Y**2)/(twzWaist**2*trajlib.zeta_dependence(a.Z,twzWaist,twzLambda)))/a.m
     # a_z = -2*(twzLambda/(np.pi*twzWaist**2))**2 * a.Z* U_eff/(trajlib.zeta_dependence(a.Z,twzWaist,twzLambda)**2)*np.exp(-2*(a.X**2+a.Y**2)/(twzWaist**2*trajlib.zeta_dependence(a.Z,twzWaist,twzLambda)))*(1+2*(a.X**2+a.Y**2)/trajlib.zeta_dependence(a.Z,twzWaist,twzLambda)/twzWaist**2)/a.m
-    omega_r = 200e3
-    omega_z = 150e3
-    a_x = - omega_r**2 * x
-    a_y = - omega_r**2 * y
-    a_z = - omega_z**2 * z
+
+    a_x = - trapFreq_r**2 * x
+    a_y = - trapFreq_r**2 * y
+    a_z = - trapFreq_z**2 * z
     f = np.array([a_x,a_y,a_z - trajlib.g])
 
     return f
@@ -104,19 +91,19 @@ c = Camera(position=(0,0,lensDistance),
 
 randomPosition = partial(np.random.normal, loc=0)
 
-for repeat in range(500):
+for repeat in range(5000):
     print(repeat)
-    baseFileName = f"xsimulation_atomOnCenterPixel_{repeat}.h5"
-    imageFileName = f"{pictureFolder}/{baseFileName}"
-    simulationFileName = f"{simulationFolder}/{baseFileName}"
+    fileName = f"{baseFileName}_{repeat}.h5"
+    imageFileName = f"{pictureFolder}/{fileName}"
+    simulationFileName = f"{simulationFolder}/{fileName}"
     # exp = trajlib.experiment()
     exp = trajlib.experiment(elasticForceFromTweezer)
     if not os.path.exists(simulationFileName):
 
         for i in range(nOfAtoms):
-            if np.random.rand()>.5:
-                tweezerPosition = np.random.random(3)*np.array([-pixelSize,pixelSize,0]) + np.array([i*pixelSize*10-cameraSize[1]/2+pixelSize*5,i*pixelSize*.5-pixelSize*5,0])
-                atomPosition = tweezerPosition + np.concatenate((np.random.normal(pixelSize/2, radius_rms, 2),np.random.normal(0, z_rms, 1)))
+            # if np.random.rand()>.5:
+                tweezerPosition = np.random.random(3)*np.array([-pixelSize,pixelSize,0])# + np.array([i*pixelSize*10-cameraSize[1]/2+pixelSize*5,i*pixelSize*.5-pixelSize*5,0])
+                atomPosition = tweezerPosition + np.concatenate((np.random.normal(0, radius_rms, 2),np.random.normal(0, z_rms, 1)))
                 atomVelocity = np.concatenate((np.random.normal(0, v_r_rms, 2),np.random.normal(0, v_z_rms, 1)))
                 newAtom = trajlib.Ytterbium(*atomPosition, *atomVelocity, isotope=isotope)
                 newAtom.tweezerPosition = tweezerPosition
@@ -154,6 +141,9 @@ for repeat in range(500):
             tweezer_waist = twzWaist,
             tweezer_intensity = twzIntensity,
             tweezer_lambda = twzLambda,
+            tweezer_trapFreq_radial = trapFreq_r,
+            tweezer_trapFreq_axial = trapFreq_z,
+            tweezer_centers = [a.tweezerPosition for a in exp.atoms]
         )        
         exp.saveAcquisition(simulationFileName, **metadata)
     else:
