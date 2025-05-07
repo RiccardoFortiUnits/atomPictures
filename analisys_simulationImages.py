@@ -12,29 +12,70 @@ from functools import partial
 from scipy.optimize import curve_fit
 from scipy.stats import poisson
 from scipy.stats import norm
+import scipy.optimize as opt
+import ArQuS_analysis_lib as Ar
+
+
+'''----------------------------------------general values----------------------------------------'''
+comparisonRoi = 7
+'''----------------------------------------experimental data----------------------------------------'''
+exp_file = "D:/simulationImages/real images/171_10Tweezer_inTrap_12us_2Images"
+internalPath = [f"images/Orca/fluorescence {i}/frame" for i in [1,2]]
+exp_cai = Camera.doubleCameraAtomImage(exp_file, exp_file, *internalPath)
+exp_cai.calcTweezerPositions(tweezerMinPixelDistance = 10, atomPeakMinValue = 1.8)
+
+sti = exp_cai.getSurelyTrappedAtoms(photonThreshold = 8, roi = 3)
+exp_z = exp_cai.first.getAtomROI_fromBooleanArray(comparisonRoi, sti, averageOnAtoms=True)
+exp_x,exp_y = np.meshgrid(*[np.arange(0,comparisonRoi) for _ in range(2)], indexing="ij")
+exp_x = exp_x[None,:,:] - comparisonRoi//2 - (exp_cai.first.tweezerPositions - exp_cai.first.tweezerPixels)[0][:,None,None]
+exp_y = exp_y[None,:,:] - comparisonRoi//2 - (exp_cai.first.tweezerPositions - exp_cai.first.tweezerPixels)[1][:,None,None]
+
+
+'''----------------------------------------simulation data----------------------------------------'''
+sim_file = "D:/simulationImages/Yt171_12us/pictures"
+sim_cai = Camera.cameraAtomImages(sim_file)
+sim_cai.calcTweezerPositions(tweezerMinPixelDistance = 10, atomPeakMinValue = 1.8)
+sim_z = sim_cai.getAtomROI(comparisonRoi)
+sim_x,sim_y = np.meshgrid(*[np.arange(0,comparisonRoi) for _ in range(2)], indexing="ij")
+tweezerCenters = np.array([el["tweezer_centers"][0][:2] for el in sim_cai.metadata.values()])
+pixelSize = list(sim_cai.metadata.values())[0]["camera_pixelSize"]
+tweezerCenters /= pixelSize
+tweezerCenters[:,0] *= -1#for how the simulation works now, the x axis gets flipped when acquiring the image, so I put a negative sign in the position of the tweezer
+sim_x = sim_x[None,:,:] - comparisonRoi//2 - tweezerCenters[:,0][:,None,None]
+sim_y = sim_y[None,:,:] - comparisonRoi//2 - tweezerCenters[:,1][:,None,None]
 
 
 
-# import numpy as np
-# import matplotlib.pyplot as plt
-# from scipy.optimize import curve_fit
-# from scipy.stats import poisson
+coordinates = [[sim_x,sim_y,sim_z], [exp_x,exp_y,exp_z]]
+names = ["simulation", "experiment"]
 
-# repetitions = 5000
-# scattRate = 3
-# dt=.00001
-# totalTime = 1
-# nSteps = int(totalTime // dt)
-# oldNumScatter = np.sum(np.random.random((nSteps, repetitions))<scattRate*dt, axis=0)
+'''----------------------------------------azimutal average----------------------------------------'''
 
-# newTimings = np.random.exponential(1/scattRate, (nSteps,repetitions))
-# newTimings = np.cumsum(newTimings, axis=0)
-# newNumScatter = np.sum(newTimings<totalTime, axis=0)
+plt.figure("azimutal average")
+for coords, name in zip(coordinates, names):
+    r,az = Camera.cameraAtomImages.azimuthal_average(*coords,(0,0),30)
+    plt.plot(r,az, label = name)
+plt.legend()
+plt.show()
 
-# plt.plot(*np.unique(oldNumScatter, return_counts=True), alpha=0.5, label='Old Method')
-# plt.plot(*np.unique(newNumScatter, return_counts=True), alpha=0.5, label='New Method')
-# plt.legend()
-# plt.show()
+'''----------------------------------------3D gaussian fit----------------------------------------'''
+
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+for coords, name in zip(coordinates, names):
+    ax.scatter(*coords, label = name)
+
+# xy = np.vstack((sim_x.flatten(),sim_y.flatten()))
+# x_grid = np.linspace(np.min(sim_x),np.max(sim_x),100)
+# y_grid = np.linspace(np.min(sim_y),np.max(sim_y),100)
+# xv, yv = np.meshgrid(x_grid,y_grid)
+# initial_guess = np.asarray([np.max(sim_z), 0, 0, 1, 1,np.min(sim_z)])
+# p_opt,p_cov = opt.curve_fit(Ar.Gaussian_2D, xy, sim_z.flatten(), p0 = initial_guess)
+# fitted_gaussian = Ar.Gaussian_2D((xv,yv),*p_opt).reshape(100,100)
+# ax.contourf(xv,yv,fitted_gaussian,100,alpha=0.5,cmap='plasma')
+
+plt.legend()
+plt.show()
 
 
 def Gauss(x, A, B, C):
@@ -79,9 +120,9 @@ def getAverageCrossSection(image, tweezerMinPixelDistance = 10, atomPeakMinValue
 
 
 '''
-cai = Camera.doubleCameraAtomImage("D:/simulationImages/real images/smallerSet - 171_10Tweezer_inTrap_7us_2Images", "D:/simulationImages/real images/smallerSet - 171_10Tweezer_inTrap_7us_2Images", "images/Orca/fluorescence 1/frame", "images/Orca/fluorescence 2/frame")
-cai.calcTweezerPositions()
-imgs = cai.first.getAtomROI_fromBooleanArray(7, cai.getSurelyTrappedAtoms(8, 3))
+exp_cai = Camera.doubleCameraAtomImage("D:/simulationImages/real images/smallerSet - 171_10Tweezer_inTrap_7us_2Images", "D:/simulationImages/real images/smallerSet - 171_10Tweezer_inTrap_7us_2Images", "images/Orca/fluorescence 1/frame", "images/Orca/fluorescence 2/frame")
+exp_cai.calcTweezerPositions()
+imgs = exp_cai.first.getAtomROI_fromBooleanArray(7, exp_cai.getSurelyTrappedAtoms(8, 3))
 '''
 imgs, metadata = Camera.getImagesFrom_h5_files("D:/simulationImages/Yt171_7us/pictures/")
 imgs = np.array(imgs)

@@ -127,7 +127,22 @@ def reverseCoordinateChange(data_tuple, x0, y0, z0, angleXY, angleXZ, angleYZ):
 # 	CorrectSizedImage = f(x,y)
 # 	return np.fft.fft2(CorrectSizedImage)
 		
-		
+def filterScatterToGrid(x,y,z,gridPoints):
+	mins = [np.min(x), np.min(y)]
+	maxs = [np.max(x), np.max(y)]
+	X,Y = np.meshgrid(*[np.linspace(mins[i], maxs[i], gridPoints[i]) for i in [0,1]], indexing='ij')
+	Z=np.zeros(X.size)
+	rowIndexes = ((x - mins[0]) / (maxs[0] - mins[0]) * gridPoints[0]).astype(int)
+	columnIndexes = ((y - mins[1]) / (maxs[1] - mins[1]) * gridPoints[1]).astype(int)
+	rowIndexes[rowIndexes == gridPoints[0]] -= 1
+	columnIndexes[columnIndexes == gridPoints[1]] -= 1
+	pointIndex = rowIndexes * X.shape[1] + columnIndexes
+	np.add.at(Z, pointIndex, z)
+	unique, count = np.unique(pointIndex, axis=0, return_counts=True)
+	Z[unique] /= count
+	Z=Z.reshape(X.shape)
+	return X,Y,Z
+
 
 
 def save_h5_image(imageName, image, **metadata):	
@@ -155,7 +170,8 @@ def getImagesFrom_h5_files(folderPath, internalPath = None):
 	files = [f for f in os.listdir(folderPath) if f.endswith('.h5')]
 	if not files:
 		raise ValueError("No h5 files found in the specified folder.")
-
+	if len(files) > 400:
+		print(f"reading all the images from path {folderPath}, it may take a while")
 	images = []
 	metadata = {}
 
@@ -190,8 +206,8 @@ class cameraAtomImages:
 	def findCenterOfGaussianImage(image):
 		x,y = np.meshgrid(*[np.arange(0,image.shape[i]) for i in range(2)], indexing="ij")
 		center = np.unravel_index(np.argmax(np.abs(image)), image.shape)
-		parameters, _ = curve_fit(cameraAtomImages.Gauss2D, np.stack((x,y), axis=-1), image.flatten(), p0=[np.max(image), 1, *center])
-		return parameters[2], parameters[3]
+		parameters, _ = curve_fit(Ar.Gaussian_2D, np.vstack((x.flatten(),y.flatten())), image.flatten(), p0=[np.max(image), *center, 1,1, 0])
+		return parameters[1], parameters[2]
 	
 
 
@@ -415,10 +431,6 @@ class pixelGrid:
 		np.add.at(self.pixels, (x_normalized, y_normalized), 1)
 	def clear(self):
 		self.pixels = np.zeros((self.nofXpixels,self.nofYpixels))
-	@staticmethod
-	def looseShotsForQuantumEfficiency(shotsCoordinates, QE : float):
-		mask = np.random.rand(shotsCoordinates.shape[1]) > QE
-		return shotsCoordinates[mask]
 
 class cMosGrid(pixelGrid):
 	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
@@ -1107,61 +1119,69 @@ if __name__ == '__main__':
 	# plt.imshow(np.mean(q,axis=0))
 	# plt.show()
 
-	fig = plt.figure()
-	ax = fig.add_subplot(111, projection='3d')	
-	roi = 7
-	x,y = np.meshgrid(*[np.arange(0,roi) for _ in range(2)], indexing="ij")
-	x = x[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[0][:,None,None]
-	y = y[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[1][:,None,None]
-	for i in ["allTweezers", "fullTweezers"]:
-		if i=="allTweezers":
-			z = cai.first.getAverageAtomROI(roi)
-		else:
-			sti = cai.getSurelyTrappedAtoms(8, 3)
-			z = cai.first.getAtomROI_fromBooleanArray(roi, sti, averageOnAtoms=True)
+	# fig = plt.figure()
+	# ax = fig.add_subplot(111, projection='3d')	
+	# roi = 7
+	# x,y = np.meshgrid(*[np.arange(0,roi) for _ in range(2)], indexing="ij")
+	# x = x[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[0][:,None,None]
+	# y = y[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[1][:,None,None]
+	# for i in ["allTweezers", "fullTweezers"]:
+	# 	if i=="allTweezers":
+	# 		z = cai.first.getAverageAtomROI(roi)
+	# 	else:
+	# 		sti = cai.getSurelyTrappedAtoms(8, 3)
+	# 		z = cai.first.getAtomROI_fromBooleanArray(roi, sti, averageOnAtoms=True)
 
-		# Flatten the arrays for plotting
-		x_flat = x.flatten()
-		y_flat = y.flatten()
-		z_flat = z.flatten()
+	# 	# Flatten the arrays for plotting
+	# 	x_flat = x.flatten()
+	# 	y_flat = y.flatten()
+	# 	z_flat = z.flatten()
 
-		# Plot the surface
-		ax.scatter(x,y,z, label=i)
-		if i=="fullTweezers":
-			xy = np.vstack((x.flatten(),y.flatten()))
-			x_grid = np.linspace(np.min(x),np.max(x),100)
-			y_grid = np.linspace(np.min(y),np.max(y),100)
-			xv, yv = np.meshgrid(x_grid,y_grid)
-			initial_guess = np.asarray([np.max(z), 0, 0, 1, 1,np.min(z)])
-			p_opt,p_cov = opt.curve_fit(Ar.Gaussian_2D, xy, z.flatten(), p0 = initial_guess)
-			fitted_gaussian = Ar.Gaussian_2D((xv,yv),*p_opt).reshape(100,100)
-			ax.contourf(xv,yv,fitted_gaussian,100,alpha=0.5,cmap='plasma', label=f"{i} gaussian fit")
+	# 	# Plot the surface
+	# 	ax.scatter(x,y,z, label=i)
+	# 	if i=="fullTweezers":
+	# 		xy = np.vstack((x.flatten(),y.flatten()))
+	# 		x_grid = np.linspace(np.min(x),np.max(x),100)
+	# 		y_grid = np.linspace(np.min(y),np.max(y),100)
+	# 		xv, yv = np.meshgrid(x_grid,y_grid)
+	# 		initial_guess = np.asarray([np.max(z), 0, 0, 1, 1,np.min(z)])
+	# 		p_opt,p_cov = opt.curve_fit(Ar.Gaussian_2D, xy, z.flatten(), p0 = initial_guess)
+	# 		fitted_gaussian = Ar.Gaussian_2D((xv,yv),*p_opt).reshape(100,100)
+	# 		ax.contourf(xv,yv,fitted_gaussian,100,alpha=0.5,cmap='plasma', label=f"{i} gaussian fit")
 
-	ax.set_xlabel('X')
-	ax.set_ylabel('Y')
-	ax.set_zlabel('Z')
-	ax.set_title('3D Function Plot')
-	plt.legend()
-	plt.show()
+	# ax.set_xlabel('X')
+	# ax.set_ylabel('Y')
+	# ax.set_zlabel('Z')
+	# ax.set_title('3D Function Plot')
+	# plt.legend()
+	# plt.show()
 
 
 		
-	roi = 7
-	x,y = np.meshgrid(*[np.arange(0,roi) for _ in range(2)], indexing="ij")
-	x = x[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[0][:,None,None]
-	y = y[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[1][:,None,None]
-	for i in ["allTweezers", "fullTweezers"]:
-		if i=="allTweezers":
-			z = cai.first.getAverageAtomROI(roi)
-		else:
-			sti = cai.getSurelyTrappedAtoms(8, 3)
-			z = cai.first.getAtomROI_fromBooleanArray(roi, sti, averageOnAtoms=True)
+	# roi = 7
+	# x,y = np.meshgrid(*[np.arange(0,roi) for _ in range(2)], indexing="ij")
+	# x = x[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[0][:,None,None]
+	# y = y[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[1][:,None,None]
+	# for i in ["allTweezers", "fullTweezers"]:
+	# 	if i=="allTweezers":
+	# 		z = cai.first.getAverageAtomROI(roi)
+	# 	else:
+	# 		sti = cai.getSurelyTrappedAtoms(8, 3)
+	# 		z = cai.first.getAtomROI_fromBooleanArray(roi, sti, averageOnAtoms=True)
 
-		r,az = cameraAtomImages.azimuthal_average(x,y,z,(0,0),30)
-		plt.plot(r,az, label = i)
-	plt.legend()
+	# 	r,az = cameraAtomImages.azimuthal_average(x,y,z,(0,0),30)
+	# 	plt.plot(r,az, label = i)
+	# plt.legend()
+	# plt.show()
+
+	def f(xy):
+		r=np.linalg.norm(xy,axis=-1)
+		return Ar.Gaussian(r, 1, 0,2,0)
+	xy = np.random.uniform(-1,0,(10000,2))
+	x,y=xy.T
+	z=f(xy)
+	X,Y,Z = filterScatterToGrid(x,y,z,[10,9])
+	plt.imshow(Z)
 	plt.show()
-
-
 
 	pass
