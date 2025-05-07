@@ -12,6 +12,7 @@ from functools import partial
 import inspect
 from scipy.optimize import curve_fit
 from scipy.ndimage import maximum_filter
+from mpl_toolkits.mplot3d import Axes3D
 
 def plot2D(Z, x_range, y_range, figureTitle=""):
 	if Z.dtype == np.complex128:
@@ -164,7 +165,7 @@ class cameraAtomImages:
 		return parameters[2]
 	@staticmethod
 	def findCenterOfGaussianImage(image):
-		x,y = np.meshgrid(*[np.arange(0,image.shape[i]) for i in range(2)])
+		x,y = np.meshgrid(*[np.arange(0,image.shape[i]) for i in range(2)], indexing="ij")
 		center = np.unravel_index(np.argmax(np.abs(image)), image.shape)
 		parameters, _ = curve_fit(cameraAtomImages.Gauss2D, np.stack((x,y), axis=-1), image.flatten(), p0=[np.max(image), 1, *center])
 		return parameters[2], parameters[3]
@@ -197,7 +198,7 @@ class cameraAtomImages:
 			centers[:,i] += np.array(cameraAtomImages.findCenterOfGaussianImage(section))
 				
 		self.__tweezerPositions = centers
-		self.__tweezerPixels = pixelCenters
+		self.__tweezerPixels = np.round(centers).astype(int)
 
 	@property
 	def tweezerPositions(self):
@@ -229,7 +230,7 @@ class cameraAtomImages:
 			atomIdx = np.arange(0, len(self.tweezerPixels.T))
 			mesh = True
 		if mesh:
-			imageIdx, atomIdx = np.meshgrid(imageIdx, atomIdx)
+			imageIdx, atomIdx = np.meshgrid(imageIdx, atomIdx, indexing='ij')
 			imageIdx = imageIdx.flatten()
 			atomIdx = atomIdx.flatten()
 		corners = self.tweezerPixels - np.repeat(roi//2,2)[:,None]
@@ -1013,10 +1014,16 @@ if __name__ == '__main__':
 	# plt.imshow(np.mean(q,axis=0))
 	# plt.show()
 
-	file = "D:/simulationImages/real images/171_10Tweezer_inTrap_12us_2Images"
+	file = "D:/simulationImages/real images/smallerSet - 171_10Tweezer_inTrap_7us_2Images"
 	internalPath = [f"images/Orca/fluorescence {i}/frame" for i in [1,2]]
 	cai = doubleCameraAtomImage(file, file, *internalPath)
 	cai.calcTweezerPositions()
+
+	
+	plt.imshow(cai.first.averageImage().T)
+	plt.scatter(*(cai.first.tweezerPositions),s=1,c='red')
+	plt.show()
+
 	q = cai.first.getAtomROI(7)
 	plt.imshow(np.mean(q,axis=0))
 	plt.show()
@@ -1028,8 +1035,45 @@ if __name__ == '__main__':
 	plt.imshow(np.mean(q,axis=0))
 	plt.show()
 	
-	q = cai.first.getAtomROI_fromBooleanArray(7, cai.getSurelyTrappedAtoms(8, 3))
-	plt.imshow(np.mean(q,axis=0))
+	# q = cai.first.getAtomROI_fromBooleanArray(7, cai.getSurelyTrappedAtoms(8, 3))
+	# plt.imshow(np.mean(q,axis=0))
+	# plt.show()
+	sti = cai.getSurelyTrappedAtoms(8, 3)
+	roi = 7
+	z = cai.first.getAtomROI_fromBooleanArray(roi, sti)
+	centerShifts = cai.first.tweezerPositions - cai.first.tweezerPixels
+	x,y = np.meshgrid(*[np.arange(0,z[0].shape[i]) for i in range(2)], indexing="ij")
+	x = x[None,:,:] - roi//2 + (cai.first.tweezerPositions - cai.first.tweezerPixels)[0][:,None,None]
+	y = y[None,:,:] - roi//2 + (cai.first.tweezerPositions - cai.first.tweezerPixels)[1][:,None,None]
+	fig = plt.figure()
+	ax = fig.add_subplot(111, projection='3d')
+
+	# Flatten the arrays for plotting
+	x_flat = x.flatten()
+	y_flat = y.flatten()
+	z_flat = z.flatten()
+
+	# Plot the surface
+	ax.plot_trisurf(x_flat, y_flat, z_flat, cmap='viridis', edgecolor='none')
+
+	ax.set_xlabel('X')
+	ax.set_ylabel('Y')
+	ax.set_zlabel('Z')
+	ax.set_title('3D Function Plot')
+
 	plt.show()
+
+	# n=np.array([100,59])
+	# size=np.array([2,1])
+	
+	# x,y=np.meshgrid(*[np.linspace(0,size[i],n[i]) for i in [0,1]], indexing='ij')
+	
+	# img = ((x-1)**2+(y-.5)**2<55.5**2).astype(float)
+	# plt.imshow(img)
+
+	# trs = fft2_butBetter(img, size, n/size*.2)
+	# plt.imshow(np.abs(trs))
+
+
 
 	pass
