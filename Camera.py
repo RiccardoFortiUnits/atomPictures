@@ -13,6 +13,9 @@ import inspect
 from scipy.optimize import curve_fit
 from scipy.ndimage import maximum_filter
 from mpl_toolkits.mplot3d import Axes3D
+from scipy import constants, signal
+import scipy.optimize as opt
+import ArQuS_analysis_lib as Ar
 
 def plot2D(Z, x_range, y_range, figureTitle=""):
 	if Z.dtype == np.complex128:
@@ -106,6 +109,26 @@ def reverseCoordinateChange(data_tuple, x0, y0, z0, angleXY, angleXZ, angleYZ):
 
 	return x_Prime + x0, y_Prime + y0, z_Prime + z0
 
+# def fft2_butBetter(image, imageSize, transformSize, transform_n = None, paddingValue = 0):
+# 	n = image.shape
+# 	if transform_n is None:
+# 		transform_n = n
+# 	requestedImageSize = transform_n / transformSize
+# 	if requestedImageSize>
+# 	requestedImageResolution = 
+# 	def f(x,y):
+# 		interpolator = RegularGridInterpolator(
+# 			(np.linspace(0,imageSize[i],n[i]) for i in [0,1]), image, bounds_error=False, fill_value=paddingValue
+# 		)
+# 		points = np.stack((x, y), axis = -1)
+# 		im = interpolator(points)
+# 		return im
+# 	x,y=np.meshgrid(*[np.linspace(0,requestedImageSize[i],transform_n[i]) for i in [0,1]], indexing='ij')
+# 	CorrectSizedImage = f(x,y)
+# 	return np.fft.fft2(CorrectSizedImage)
+		
+		
+
 
 def save_h5_image(imageName, image, **metadata):	
 	with h5py.File(imageName, 'w') as f:
@@ -180,9 +203,8 @@ class cameraAtomImages:
 	def averageImage(self):
 		average = np.mean(self.images, axis = 0)
 		return average
-	
-	def calcTweezerPositions(self, tweezerMinPixelDistance = 10, atomPeakMinValue = 1.8):
-		image = self.averageImage()
+	@staticmethod
+	def getTweezerPositions(image, tweezerMinPixelDistance = 10, atomPeakMinValue = 1.8):
 		maxes = maximum_filter(image, size=tweezerMinPixelDistance)
 		pixelCenters = np.array(np.where(np.logical_and((maxes == image), (image > atomPeakMinValue))))
 		#let's find the actual center by fitting a gaussian on the roi
@@ -196,9 +218,34 @@ class cameraAtomImages:
 			# 	centers[axis,i] += cameraAtomImages.findCenterOfGaussianSignal(section)
 			section = image[corner[0]:corner[0]+tweezerMinPixelDistance, corner[1]:corner[1]+tweezerMinPixelDistance]
 			centers[:,i] += np.array(cameraAtomImages.findCenterOfGaussianImage(section))
+		return centers
+
+	def calcTweezerPositions(self, tweezerMinPixelDistance = 10, atomPeakMinValue = 1.8):
+		image = self.averageImage()
+		centers = self.getTweezerPositions(image, tweezerMinPixelDistance, atomPeakMinValue)
 				
 		self.__tweezerPositions = centers
 		self.__tweezerPixels = np.round(centers).astype(int)
+
+	@staticmethod
+	def azimuthal_average(x,y,z, center = None, n_bins=15):
+		if center is None:
+			idx = np.unravel_index(np.argmax(z), x.shape)
+			center = x[idx],y[idx]
+		x0,y0 = center
+
+		r = np.hypot(x-x0,y-y0) 
+		r_bins = np.linspace(r.min(),r.max(),n_bins+1)
+		r_bins_center = 0.5*(r_bins[:-1]+r_bins[1:])
+
+		z_avg = np.zeros(n_bins)
+		binMap = ((r - r.min()) / (r_bins[1]-r_bins[0])).astype(int)
+		binMap[binMap==n_bins] = n_bins-1
+		np.add.at(z_avg, binMap, z)
+		unique, count = np.unique(binMap, return_counts=True)
+		z_avg[unique] /= count
+
+		return r_bins_center, z_avg
 
 	@property
 	def tweezerPositions(self):
@@ -220,29 +267,50 @@ class cameraAtomImages:
 			trappedAtoms[:,i] = atomsPerRoi >= photonThreshold
 		return trappedAtoms
 	
-	def getAtomROI(self, roi, imageIdx = None, atomIdx = None):
-		'''if imageIdx and/or atomIdx not specified, all the possible indexes will be considered, and imageIdx and atomIdx will be meshed together, to obtain all the combinations of index couples'''
+	def getAtomROI(self, roi, imageIdx = None, atomIdx = None, averageOnAtoms = False):
+		return self.getAtomROIOnImages(self.images, self.tweezerPixels, roi, imageIdx, atomIdx, averageOnAtoms)
+	def getAverageAtomROI(self, roi, atomIdx = None):
+		return self.getAtomROIOnImages(self.averageImage()[None,:,:], self.tweezerPixels, roi, None, atomIdx, False)
+	def getAtomROI_fromBooleanArray(self, roi, array, averageOnAtoms = False):
+		imgs, atoms = np.where(array)
+		return self.getAtomROIOnImages(self.images, self.tweezerPixels, roi, imgs, atoms, averageOnAtoms)
+	
+	@staticmethod
+	def getAtomROIOnImages(images, tweezerPixels, roi, imageIdx = None, atomIdx = None, averageOnAtoms = False):
+		'''
+		returns the sub-images from the specified images containing the specified atoms. 
+
+		if imageIdx and/or atomIdx are not specified, all the valid indexes will be considered, and imageIdx and atomIdx will be meshed together, to obtain all the combinations of index couples.
+		
+		if averageOnAtoms is true, all the images of the same atom will be averaged, resulting in an nOfAtoms long vector of images
+		'''
 		mesh = False
 		if imageIdx is None:
-			imageIdx = np.arange(0, len(self.images))
+			imageIdx = np.arange(0, len(images))
 			mesh = True
 		if atomIdx is None:
-			atomIdx = np.arange(0, len(self.tweezerPixels.T))
+			atomIdx = np.arange(0, len(tweezerPixels.T))
 			mesh = True
 		if mesh:
 			imageIdx, atomIdx = np.meshgrid(imageIdx, atomIdx, indexing='ij')
 			imageIdx = imageIdx.flatten()
 			atomIdx = atomIdx.flatten()
-		corners = self.tweezerPixels - np.repeat(roi//2,2)[:,None]
+		corners = tweezerPixels - np.repeat(roi//2,2)[:,None]
 		corners = corners[:, atomIdx]
-		return self.images[imageIdx[:,None,None],
+		allImages = images[imageIdx[:,None,None],
 					 np.round(np.linspace(corners[0],corners[0]+roi-1, roi)).T.astype(int)[:,:,None],
 					 np.round(np.linspace(corners[1],corners[1]+roi-1, roi)).T.astype(int)[:,None,:]]
+		if averageOnAtoms:
+			averagedAtomImages = np.zeros((len(tweezerPixels.T), roi,roi))
+			np.add.at(averagedAtomImages, atomIdx, allImages)
+			unique, count = np.unique(atomIdx, return_counts=True)
+			averagedAtomImages = averagedAtomImages[unique]
+			averagedAtomImages /= count[:,None,None]
+			return averagedAtomImages
+		
+		return allImages
 
 
-	def getAtomROI_fromBooleanArray(self, roi, array):
-		imgs, atoms = np.where(array)
-		return self.getAtomROI(roi, imgs, atoms)
 	def getTweezerImage(self, roi, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
 		'''returns a boolean image that is True where the roi of an atom should be'''
 		img = np.zeros_like(self.images[0], dtype=bool)
@@ -1020,59 +1088,79 @@ if __name__ == '__main__':
 	cai.calcTweezerPositions()
 
 	
-	plt.imshow(cai.first.averageImage().T)
-	plt.scatter(*(cai.first.tweezerPositions),s=1,c='red')
-	plt.show()
+	# plt.imshow(cai.first.averageImage().T)
+	# plt.scatter(*(cai.first.tweezerPositions),s=1,c='red')
+	# plt.show()
 
-	q = cai.first.getAtomROI(7)
-	plt.imshow(np.mean(q,axis=0))
-	plt.show()
+	# q = cai.first.getAtomROI(7)
+	# plt.imshow(np.mean(q,axis=0))
+	# plt.show()
 
-	q = cai.first.getAtomROI_fromBooleanArray(7, cai.first.getTrappedAtoms(8, 3))
-	plt.imshow(np.mean(q,axis=0))
-	plt.show()
-	q = cai.second.getAtomROI_fromBooleanArray(7, cai.second.getTrappedAtoms(8, 3))
-	plt.imshow(np.mean(q,axis=0))
-	plt.show()
+	# q = cai.first.getAtomROI_fromBooleanArray(7, cai.first.getTrappedAtoms(8, 3))
+	# plt.imshow(np.mean(q,axis=0))
+	# plt.show()
+	# q = cai.second.getAtomROI_fromBooleanArray(7, cai.second.getTrappedAtoms(8, 3))
+	# plt.imshow(np.mean(q,axis=0))
+	# plt.show()
 	
 	# q = cai.first.getAtomROI_fromBooleanArray(7, cai.getSurelyTrappedAtoms(8, 3))
 	# plt.imshow(np.mean(q,axis=0))
 	# plt.show()
-	sti = cai.getSurelyTrappedAtoms(8, 3)
-	roi = 7
-	z = cai.first.getAtomROI_fromBooleanArray(roi, sti)
-	centerShifts = cai.first.tweezerPositions - cai.first.tweezerPixels
-	x,y = np.meshgrid(*[np.arange(0,z[0].shape[i]) for i in range(2)], indexing="ij")
-	x = x[None,:,:] - roi//2 + (cai.first.tweezerPositions - cai.first.tweezerPixels)[0][:,None,None]
-	y = y[None,:,:] - roi//2 + (cai.first.tweezerPositions - cai.first.tweezerPixels)[1][:,None,None]
+
 	fig = plt.figure()
-	ax = fig.add_subplot(111, projection='3d')
+	ax = fig.add_subplot(111, projection='3d')	
+	roi = 7
+	x,y = np.meshgrid(*[np.arange(0,roi) for _ in range(2)], indexing="ij")
+	x = x[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[0][:,None,None]
+	y = y[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[1][:,None,None]
+	for i in ["allTweezers", "fullTweezers"]:
+		if i=="allTweezers":
+			z = cai.first.getAverageAtomROI(roi)
+		else:
+			sti = cai.getSurelyTrappedAtoms(8, 3)
+			z = cai.first.getAtomROI_fromBooleanArray(roi, sti, averageOnAtoms=True)
 
-	# Flatten the arrays for plotting
-	x_flat = x.flatten()
-	y_flat = y.flatten()
-	z_flat = z.flatten()
+		# Flatten the arrays for plotting
+		x_flat = x.flatten()
+		y_flat = y.flatten()
+		z_flat = z.flatten()
 
-	# Plot the surface
-	ax.plot_trisurf(x_flat, y_flat, z_flat, cmap='viridis', edgecolor='none')
+		# Plot the surface
+		ax.scatter(x,y,z, label=i)
+		if i=="fullTweezers":
+			xy = np.vstack((x.flatten(),y.flatten()))
+			x_grid = np.linspace(np.min(x),np.max(x),100)
+			y_grid = np.linspace(np.min(y),np.max(y),100)
+			xv, yv = np.meshgrid(x_grid,y_grid)
+			initial_guess = np.asarray([np.max(z), 0, 0, 1, 1,np.min(z)])
+			p_opt,p_cov = opt.curve_fit(Ar.Gaussian_2D, xy, z.flatten(), p0 = initial_guess)
+			fitted_gaussian = Ar.Gaussian_2D((xv,yv),*p_opt).reshape(100,100)
+			ax.contourf(xv,yv,fitted_gaussian,100,alpha=0.5,cmap='plasma', label=f"{i} gaussian fit")
 
 	ax.set_xlabel('X')
 	ax.set_ylabel('Y')
 	ax.set_zlabel('Z')
 	ax.set_title('3D Function Plot')
-
+	plt.legend()
 	plt.show()
 
-	# n=np.array([100,59])
-	# size=np.array([2,1])
-	
-	# x,y=np.meshgrid(*[np.linspace(0,size[i],n[i]) for i in [0,1]], indexing='ij')
-	
-	# img = ((x-1)**2+(y-.5)**2<55.5**2).astype(float)
-	# plt.imshow(img)
 
-	# trs = fft2_butBetter(img, size, n/size*.2)
-	# plt.imshow(np.abs(trs))
+		
+	roi = 7
+	x,y = np.meshgrid(*[np.arange(0,roi) for _ in range(2)], indexing="ij")
+	x = x[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[0][:,None,None]
+	y = y[None,:,:] - roi//2 - (cai.first.tweezerPositions - cai.first.tweezerPixels)[1][:,None,None]
+	for i in ["allTweezers", "fullTweezers"]:
+		if i=="allTweezers":
+			z = cai.first.getAverageAtomROI(roi)
+		else:
+			sti = cai.getSurelyTrappedAtoms(8, 3)
+			z = cai.first.getAtomROI_fromBooleanArray(roi, sti, averageOnAtoms=True)
+
+		r,az = cameraAtomImages.azimuthal_average(x,y,z,(0,0),30)
+		plt.plot(r,az, label = i)
+	plt.legend()
+	plt.show()
 
 
 
