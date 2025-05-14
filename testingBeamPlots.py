@@ -9,6 +9,10 @@ plt.ion()
 
 showPlots = False
 
+normal = ""
+fixedAtom = "_atomUnmovable"
+zLattice = "_z_lattice"
+usedCase = normal#
 '''-------------------------------atom------------------------------'''
 nOfAtoms = 10
 useFixedTweezers = True
@@ -27,16 +31,40 @@ freq = trajlib.c/(baseAtom.transitions[0].Lambda) + detuning
 Lambda = trajlib.c/freq
 
 '''-------------------------------tweezer laser------------------------------'''
+
+scaling = 1#                                                                                              .5
+
 twzWaist = 540e-9
-twzIntensity = 2.24e-3*trajlib.kB # Tweezer depth in J
+twzIntensity = scaling * 2.24e-3*trajlib.kB # Tweezer depth in J
 twzLambda = 532e-9 # tweezer wavelength in m
-trapFreq_r = 2*np.pi*140e3
-trapFreq_z = 2*np.pi*30e3
+trapFreq_r = np.sqrt(scaling) * 2*np.pi*140e3
+baseFreq_z = 30e3 if usedCase!=zLattice else 200e3
+trapFreq_z = np.sqrt(scaling) * 2*np.pi*baseFreq_z
 n_0 = trajlib.n_T(trapFreq_r,initialT)
 radius_rms = np.sqrt(trajlib.hbar/(2*baseAtom.m*trapFreq_r)*(2*n_0+1))  # initial RMS position (radial)
 z_rms = np.sqrt(trajlib.hbar/(2*baseAtom.m*trapFreq_z)*(2*n_0+1))  # initial RMS position (axial)
 v_r_rms = np.sqrt(trajlib.hbar*trapFreq_r/(2*baseAtom.m)*(2*n_0+1))  # initial RMS velocity (radial)
 v_z_rms = np.sqrt(trajlib.hbar*trapFreq_z/(2*baseAtom.m)*(2*n_0+1))  # initial RMS velocity (axial)
+if usedCase == fixedAtom:
+    radius_rms = 0
+    z_rms = 0
+    v_r_rms = 0
+    v_z_rms = 0
+    trajlib.experiment.nextPointInTrajectory = lambda *x,**y: None
+
+'''-------------------------------pixels and camera------------------------------'''
+pixelScale =                                                                        10.
+pixelType = "" if pixelScale == 1 else f"_{pixelScale}reduction"
+nPixels = np.array([20,20 * ((nOfAtoms+1)//2)]) * int(pixelScale)
+pixelSize = 4.6e-6 / pixelScale
+cameraSize = pixelSize*nPixels
+lensDistance = 25.5e-3
+lensRadius = 16e-3
+quantumEfficiency = .83
+objectiveTransmission = .76
+dicroicReflection = .9
+filterTransmission = .9**2
+totalEfficiency = quantumEfficiency * objectiveTransmission * dicroicReflection * filterTransmission
 
 '''-------------------------------timings------------------------------'''
 max_dt = 1e-8
@@ -44,19 +72,13 @@ min_dt = 1e-10
 max_dx = twzWaist / 10
 impulseDuration = 400e-9
 experimentDuration = 12e-6 #2-50us
-
-'''-------------------------------pixels------------------------------'''
-nPixels = np.array([20,20 * ((nOfAtoms+1)//2)])
-pixelSize = 4.6e-6
-cameraSize = pixelSize*nPixels
-lensDistance = 25.5e-3
-
+acquisitionDuration = 10e-6#experimentDuration * 1#if you want, you can do more than one acquisition time for the same simulation (of course the simulation has to be long enough)
 
 '''-------------------------------folders and files------------------------------'''
-pictureFolder = f"D:/simulationImages/Yt{isotope}_{int(experimentDuration*1e6)}us_{nOfAtoms}tweezerArray/pictures/"
-simulationFolder = f"D:/simulationImages/Yt{isotope}_{int(experimentDuration*1e6)}us_{nOfAtoms}tweezerArray/simulation/"
+pictureFolder = f"D:/simulationImages/correctScattering_Yt{isotope}_{int(experimentDuration*1e6)}us_{nOfAtoms}tweezerArray{usedCase}/{int(acquisitionDuration*1e6)}us_pictures{pixelType}/"
+simulationFolder = f"D:/simulationImages/correctScattering_Yt{isotope}_{int(experimentDuration*1e6)}us_{nOfAtoms}tweezerArray{usedCase}/simulation/"
 baseFileName = "simulation"
-blurFolder = "blurs/"
+blurFolder = "D:/simulationImages/blurs/399nm"
 
 if not os.path.exists(pictureFolder):
     os.makedirs(pictureFolder)
@@ -87,10 +109,10 @@ def elasticForceFromTweezer(a : trajlib.Atom, *args):
 G = Camera.blurFromImages(blurFolder)
 #'''
 magnificationGrid = pixelGrid(cameraSize[0],cameraSize[1],nPixels[0],nPixels[1], lambda xy, z: G(xy, z - lensDistance))
-quantumEfficiencyGrid = refreshing_cMosGrid(cameraSize[0],cameraSize[1],nPixels[0],nPixels[1], randExtractor.randomLosts(0.1), "Orca_testing/shots/", imageStart = (10,10), imageSizes = (-10,-10))
+quantumEfficiencyGrid = refreshing_cMosGrid(cameraSize[0],cameraSize[1],nPixels[0],nPixels[1], randExtractor.randomLosts(1-totalEfficiency), "Orca_testing/shots/", imageStart = (10,10), imageSizes = (-10,-10))
 c = Camera(position=(0,0,lensDistance), 
         orientation=(0,-np.pi/2,0), 
-        radius=16e-3,
+        radius=lensRadius,
         pixelGrids=(magnificationGrid, quantumEfficiencyGrid))
 
 randomPosition = partial(np.random.normal, loc=0)
@@ -141,6 +163,12 @@ for repeat in range(1000):
 
             lens0_radius = c.radius,
             lens0_distance = lensDistance,
+            quantumEfficiency = quantumEfficiency,
+            objectiveTransmission = objectiveTransmission,
+            dicroicReflection = dicroicReflection,
+            filterTransmission = filterTransmission,
+            totalEfficiency = totalEfficiency,
+
             camera_pixelSize = pixelSize,
             camera_pixelNumber = nPixels,
             camera_blurImagesPath = blurFolder,
@@ -157,8 +185,10 @@ for repeat in range(1000):
     if showPlots:
         exp.plotTrajectories()
     if not os.path.exists(imageFileName):
-        startPositions, directions = exp.getScatteredPhotons()
-        image = c.takePicture(startPositions, directions, plot=showPlots, saveToFile=imageFileName, **metadata)
+        startPositions, directions = exp.getScatteredPhotons(acquisitionDuration)
+        image = c.takePicture(startPositions, directions, plot=showPlots, saveToFile=imageFileName, acquisitionDuration = acquisitionDuration, **metadata)
+        # a=cameraAtomImages(pictureFolder)
+        # plt.imshow(a.averageImage())
         if showPlots:
             exp.plotTrajectoriesAndCameraAcquisition(c)
             input("Press Enter to close the plot windows")

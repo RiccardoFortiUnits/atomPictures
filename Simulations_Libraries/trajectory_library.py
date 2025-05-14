@@ -979,22 +979,10 @@ def SpontaneousEmission (wavelength,m):
 	k[2] = kmod*np.cos(theta)
 	return hbar*k/m
 
-inverse_cdf_interp = None
-def initializeSpontaneousEmission_qPolarization():
-	global inverse_cdf_interp
-	def cdf(x):
-		# return x/np.pi + (1 - np.cos(2*x))/(6*np.pi)
-		return x/np.pi + (np.cos(2*x) - 1)/(2*np.pi)
-
-	# Create a lookup table for the inverse CDF
-	x_values = np.linspace(0, np.pi, 1000)
-	cdf_values = cdf(x_values)
-	inverse_cdf_interp = interp1d(cdf_values, x_values, kind='cubic', fill_value="extrapolate")
-initializeSpontaneousEmission_qPolarization()
 def qPolarizationAnglePDF(theta):
-		return 3+np.cos(2*theta)
+		return 3+np.cos(2*np.arcsin(theta))
 
-qPolarizationExtractor = randExtractor.distribFunFromPDF_1D(qPolarizationAnglePDF, (-np.pi/2, np.pi/2), np.pi/200)
+qPolarizationExtractor = randExtractor.distribFunFromPDF_1D(qPolarizationAnglePDF, (-1,1), 1/200)
 def SpontaneousEmission_qPolarization (wavelength,m):
 	"""
 	Emit a photon of given wavelength in a random direction
@@ -1002,17 +990,24 @@ def SpontaneousEmission_qPolarization (wavelength,m):
 	# return SpontaneousEmission(wavelength, m)
 	kmod = 2*np.pi/(wavelength)
 	k = np.zeros(3)
-	theta = qPolarizationExtractor(0)
+	theta = np.arcsin(qPolarizationExtractor(0))
 	phi = np.random.uniform(0,2*np.pi)
 	k[0] = kmod*np.cos(phi)*np.cos(theta)
 	k[2] = kmod*np.sin(phi)*np.cos(theta)
 	k[1] = kmod*np.sin(theta)
-	# if np.random.random_integers(0,1)==0:
-	#     k=np.array([-1,0,0])
-	# else:
-	#     k=np.array([0,1,0])
 	return hbar*k/m
-
+def random_direction_3D():
+	"""
+	Generate a random direction in 3D space, uniformly distributed over the surface of a sphere.
+	Returns:
+		numpy.ndarray: A 3D unit vector representing the random direction.
+	"""
+	theta = np.arccos(1 - 2 * np.random.rand())  # Uniform distribution in cos(theta)
+	phi = 2 * np.pi * np.random.rand()           # Uniform distribution in phi
+	x = np.sin(theta) * np.cos(phi)
+	y = np.sin(theta) * np.sin(phi)
+	z = np.cos(theta)
+	return np.array([x, y, z])
 def Space_grid(Ngrid, cell_center = 37*10**-2, y_lim = 15, z_lim = 8, start = 330e-3):
 	'''
 	Generate 3D grid for the simulation
@@ -1201,19 +1196,11 @@ class experiment(experimentViewer):
 		if len(self.atoms)> 0 and hasattr(self.atoms[0], "tweezerPosition"):
 			self.tweezerPositions = [a.tweezerPosition for a in self.atoms]
 		return positions
-	
+	# lastTimings:            array[nOfTimes][nOfAtoms] time of each instant for each atom
 	# lastPositons:           array[nOfTimes][nOfAtoms][3] positions of each atom at each time frame
 	# lastHits:               array{timeIndex, atomIndex, laserIndex}[nOfHits] all the recorded hits, specifies the time, atom and laser involved in the hit
 	# lastGeneratedPhotons:   array[nOfHits][3] the generated photons for each hit
 
-	def getScatteredPhotons(self):
-		if self.hasHits:
-			startPositions = self.lastPositons[self.lastHits[:-1]]
-			directions = self.lastGeneratedPhotons
-		else:
-			startPositions = np.zeros((0,3))
-			directions = np.zeros((0,3))
-		return startPositions, directions
 	
 
 	def getScatteringDistributionFromRepeatedRuns(self, time = 1e-6, stepTime = 1e-9, nOfRuns = 100, camera : Camera | None = None):

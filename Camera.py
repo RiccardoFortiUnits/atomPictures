@@ -11,7 +11,7 @@ from scipy import integrate
 from functools import partial
 import inspect
 from scipy.optimize import curve_fit
-from scipy.ndimage import maximum_filter
+from scipy.ndimage import maximum_filter, gaussian_filter,uniform_filter
 from mpl_toolkits.mplot3d import Axes3D
 from scipy import constants, signal
 import scipy.optimize as opt
@@ -108,24 +108,32 @@ def reverseCoordinateChange(data_tuple, x0, y0, z0, angleXY, angleXZ, angleYZ):
 	x_Prime = x_temp * np.cos(angleXY) - y_temp * np.sin(angleXY)
 
 	return x_Prime + x0, y_Prime + y0, z_Prime + z0
-
-# def fft2_butBetter(image, imageSize, transformSize, transform_n = None, paddingValue = 0):
-# 	n = image.shape
-# 	if transform_n is None:
-# 		transform_n = n
-# 	requestedImageSize = transform_n / transformSize
-# 	if requestedImageSize>
-# 	requestedImageResolution = 
-# 	def f(x,y):
-# 		interpolator = RegularGridInterpolator(
-# 			(np.linspace(0,imageSize[i],n[i]) for i in [0,1]), image, bounds_error=False, fill_value=paddingValue
-# 		)
-# 		points = np.stack((x, y), axis = -1)
-# 		im = interpolator(points)
-# 		return im
-# 	x,y=np.meshgrid(*[np.linspace(0,requestedImageSize[i],transform_n[i]) for i in [0,1]], indexing='ij')
-# 	CorrectSizedImage = f(x,y)
-# 	return np.fft.fft2(CorrectSizedImage)
+def fft2_butBetter(image, imageSize, transformSize, transform_n = None, paddingValue = 0):
+	n = np.array(image.shape)
+	if transform_n is None:
+		transform_n = n
+	L=imageSize
+	M=transformSize
+	m=transform_n
+	P=m/M
+	usedPixels = L/P * m
+	decimation = n / usedPixels
+	padding = np.ceil(decimation).astype(int)
+	image = np.pad(image, ((padding[0], padding[0]), (padding[1], padding[1])), mode='constant', constant_values=paddingValue)
+	
+	filteredImage = uniform_filter(image, decimation)
+	imageSize = imageSize * np.array(image.shape) / n
+	n = np.array(image.shape)
+	def f(x,y):
+		interpolator = RegularGridInterpolator(
+			(np.linspace(0,imageSize[i],n[i]) for i in [0,1]), filteredImage, bounds_error=False, fill_value=paddingValue
+		)
+		points = np.stack((x, y), axis = -1)
+		im = interpolator(points)
+		return im
+	x,y=np.meshgrid(*[np.linspace(0,P[i],transform_n[i]) for i in [0,1]], indexing='ij')
+	CorrectSizedImage = f(x,y)
+	return np.fft.fft2(CorrectSizedImage)
 		
 def filterScatterToGrid(x,y,z,gridPoints):
 	mins = [np.min(x), np.min(y)]
@@ -150,19 +158,22 @@ def save_h5_image(imageName, image, **metadata):
 		f.create_dataset('image', data=image)
 		f.attrs.update(metadata)
 
-def load_h5_image(path, returnMetadata = False):
+def load_h5_image(path, internalPath = None, returnMetadata = False):
 	'''
-		gets an image that is the average of all the images contained in folderPath.
+		gets an image from the specified path
 		also returns a dictionary {fileName:metadata} of all the metadata contained in the files
 	'''
-	with h5py.File(path, 'r') as f:
-		image = np.array(f['image'])
+	with h5py.File(path, 'r') as f:		
+		if internalPath is None:
+			image = np.array(f['image'])
+		else:
+			image = np.array(f[internalPath])
 		if returnMetadata:
 			metadata = dict(f.attrs)
 			return image, metadata
 
 	return image
-def getImagesFrom_h5_files(folderPath, internalPath = None):
+def getImagesFrom_h5_files(folderPath, internalPath = None, maxPictures = None):
 	'''
 		gets all the images contained in folderPath.
 		also returns a dictionary {fileName:metadata} of all the metadata contained in the files
@@ -170,6 +181,8 @@ def getImagesFrom_h5_files(folderPath, internalPath = None):
 	files = [f for f in os.listdir(folderPath) if f.endswith('.h5')]
 	if not files:
 		raise ValueError("No h5 files found in the specified folder.")
+	if maxPictures is not None:
+		files = files[:maxPictures]
 	if len(files) > 400:
 		print(f"reading all the images from path {folderPath}, it may take a while")
 	images = []
@@ -211,9 +224,9 @@ class cameraAtomImages:
 	
 
 
-	def __init__(self, folder, internalPath = None):
+	def __init__(self, folder, internalPath = None, maxPictures = None):
 		self.folder = folder
-		self.images, self.metadata = getImagesFrom_h5_files(folder, internalPath)
+		self.images, self.metadata = getImagesFrom_h5_files(folder, internalPath, maxPictures)
 		self.images = np.array(self.images)
 
 	def averageImage(self):
@@ -222,9 +235,17 @@ class cameraAtomImages:
 	@staticmethod
 	def getTweezerPositions(image, tweezerMinPixelDistance = 10, atomPeakMinValue = 1.8):
 		maxes = maximum_filter(image, size=tweezerMinPixelDistance)
-		pixelCenters = np.array(np.where(np.logical_and((maxes == image), (image > atomPeakMinValue))))
+		peaks = (maxes == image).astype(int)
+		#let's consider the possibility that 2 closeby pixels could have the same value (it happened to me, so it's not impossible).
+		#let's give unique values to each peak, so that by re-applying the max filter we omit closeby peaks
+		peaks *= np.arange(1,peaks.size+1).reshape(peaks.shape)
+		maxes = maximum_filter(peaks, size=tweezerMinPixelDistance)
+		peaks = maxes == peaks
+
+		pixelCenters = np.array(np.where(np.logical_and(peaks, (image > atomPeakMinValue))))
 		#let's find the actual center by fitting a gaussian on the roi
 		centers = pixelCenters - np.repeat(tweezerMinPixelDistance//2.,2)[:,None]
+		
 		for i, center in enumerate(pixelCenters.T):
 			corner = center - np.repeat(tweezerMinPixelDistance//2,2)
 			# for axis in [0,1]:
@@ -240,15 +261,17 @@ class cameraAtomImages:
 		image = self.averageImage()
 		centers = self.getTweezerPositions(image, tweezerMinPixelDistance, atomPeakMinValue)
 				
-		self.__tweezerPositions = centers
-		self.__tweezerPixels = np.round(centers).astype(int)
+		self._tweezerPositions = centers
+		self._tweezerPixels = np.round(centers).astype(int)
 
 	@staticmethod
-	def azimuthal_average(x,y,z, center = None, n_bins=15):
+	def azimuthal_average(x,y,z, center = None, n_bins=None):
 		if center is None:
 			idx = np.unravel_index(np.argmax(z), x.shape)
 			center = x[idx],y[idx]
 		x0,y0 = center
+		if n_bins is None:
+			n_bins = int(np.ceil(np.hypot(z.shape[1],z.shape[2]) / 2))
 
 		r = np.hypot(x-x0,y-y0) 
 		r_bins = np.linspace(r.min(),r.max(),n_bins+1)
@@ -265,14 +288,14 @@ class cameraAtomImages:
 
 	@property
 	def tweezerPositions(self):
-		if not hasattr(self, "__tweezerPositions"):
+		if not hasattr(self, "_tweezerPositions"):
 			self.calcTweezerPositions()
-		return self.__tweezerPositions
+		return self._tweezerPositions
 	@property
 	def tweezerPixels(self):
-		if not hasattr(self, "__tweezerPixels"):
+		if not hasattr(self, "_tweezerPixels"):
 			self.calcTweezerPositions()
-		return self.__tweezerPixels
+		return self._tweezerPixels
 	
 	def getTrappedAtoms(self, photonThreshold, roi = 3):
 		'''returns a nImg * nTweezers boolean array, where element [i,j] states if the trap j of image i is filled or not'''
@@ -339,9 +362,9 @@ class cameraAtomImages:
 	
 
 class doubleCameraAtomImage:
-	def __init__(self,firstPath, secondPath, firstInternalPath = None, secondInternalPath = None):
-		self.first = cameraAtomImages(firstPath, firstInternalPath)
-		self.second = cameraAtomImages(secondPath, secondInternalPath)
+	def __init__(self,firstPath, secondPath, firstInternalPath = None, secondInternalPath = None, maxPictures = None):
+		self.first = cameraAtomImages(firstPath, firstInternalPath, maxPictures)
+		self.second = cameraAtomImages(secondPath, secondInternalPath, maxPictures)
 	
 	def calcTweezerPositions(self, tweezerMinPixelDistance = 10, atomPeakMinValue = 1.8):
 		self.first.calcTweezerPositions(tweezerMinPixelDistance, atomPeakMinValue)
@@ -860,6 +883,22 @@ class experimentViewer:
 			metadata = dict(f.attrs)
 			return metadata
 		
+	def getScatteredPhotons(self, acquisitionTime = None):
+		if self.hasHits:
+			if acquisitionTime is not None:
+				higherUsableIndexes = np.array([np.searchsorted(self.lastTimings[:,i], acquisitionTime) for i in range(self.lastTimings.shape[1])])
+				usableIndexes = self.lastHits[0] < higherUsableIndexes[self.lastHits[1]]
+				usableHits = tuple([self.lastHits[i][usableIndexes] for i in range(len(self.lastHits))])
+				usablePhotons = self.lastGeneratedPhotons[usableIndexes]
+			else:
+				usableHits = self.lastHits
+				usablePhotons = self.lastGeneratedPhotons
+			startPositions = self.lastPositons[usableHits[0:2]]
+			directions = usablePhotons
+		else:
+			startPositions = np.zeros((0,3))
+			directions = np.zeros((0,3))
+		return startPositions, directions
 	def plotTrajectoriesAndCameraAcquisition(self, camera : Camera):
 		hitPositions, hitIdx = camera.hitLens(self.lastPositons[self.lastHits[0], self.lastHits[1]], self.lastGeneratedPhotons, returnHitIndexes=True)
 		hitCamera = np.zeros((len(self.lastHits[0])), dtype=bool)
@@ -904,10 +943,12 @@ class experimentViewer:
 	def plotTrajectories(self):
 		fig = plt.figure()
 		ax = fig.add_subplot(111, projection='3d')
-		min_bounds = np.nanmin(self.lastPositons, axis=(0, 1))
-		max_bounds = np.nanmax(self.lastPositons, axis=(0, 1))
-		max_bounds = np.nanmax(self.lastPositons, axis=(0, 1))
-		maxRange = np.nanmax(max_bounds - min_bounds)
+		min_atomBounds = np.nanmin(self.lastPositons, axis=0)
+		max_atomBounds = np.nanmax(self.lastPositons, axis=0)
+		atomRanges = max_atomBounds - min_atomBounds
+		min_bounds = min_atomBounds[0]#np.nanmin(self.lastPositons, axis=(0, 1))
+		max_bounds = max_atomBounds[0]#np.nanmax(self.lastPositons, axis=(0, 1))
+		maxRange = np.maximum(np.nanmax(max_bounds - min_bounds), 1e-9)
 		quiverLength = maxRange / 20
 		min_bounds = (max_bounds + min_bounds) / 2 - maxRange / 2
 		max_bounds = min_bounds + maxRange
@@ -1094,10 +1135,10 @@ if __name__ == '__main__':
 	# plt.imshow(np.mean(q,axis=0))
 	# plt.show()
 
-	file = "D:/simulationImages/real images/smallerSet - 171_10Tweezer_inTrap_7us_2Images"
-	internalPath = [f"images/Orca/fluorescence {i}/frame" for i in [1,2]]
-	cai = doubleCameraAtomImage(file, file, *internalPath)
-	cai.calcTweezerPositions()
+	# file = "D:/simulationImages/real images/smallerSet - 171_10Tweezer_inTrap_7us_2Images"
+	# internalPath = [f"images/Orca/fluorescence {i}/frame" for i in [1,2]]
+	# cai = doubleCameraAtomImage(file, file, *internalPath)
+	# cai.calcTweezerPositions()
 
 	
 	# plt.imshow(cai.first.averageImage().T)
@@ -1174,14 +1215,60 @@ if __name__ == '__main__':
 	# plt.legend()
 	# plt.show()
 
-	def f(xy):
-		r=np.linalg.norm(xy,axis=-1)
-		return Ar.Gaussian(r, 1, 0,2,0)
-	xy = np.random.uniform(-1,0,(10000,2))
-	x,y=xy.T
-	z=f(xy)
-	X,Y,Z = filterScatterToGrid(x,y,z,[10,9])
-	plt.imshow(Z)
-	plt.show()
+	# def f(xy):
+	# 	r=np.linalg.norm(xy,axis=-1)
+	# 	return Ar.Gaussian(r, 1, 0,2,0)
+	# xy = np.random.uniform(-1,0,(10000,2))
+	# x,y=xy.T
+	# z=f(xy)
+	# X,Y,Z = filterScatterToGrid(x,y,z,[10,9])
+	# plt.imshow(Z)
+	# plt.show()
+	
+	# exp = experimentViewer()
+	# exp.loadAcquisition("d:/simulationImages/Yt171_12us_10tweezerArray_with_z_lattice/simulation/xsimulation_2.h5")
+	# exp.plotTrajectories()
+	# directions = np.random.uniform(-1,1,(10000,3))
+	# norm = np.linalg.norm(directions,axis=1)
+	# i=0
+	# toExtract = norm >= 1
+	# while(np.sum(toExtract) > 0 and i < 100):
+	# 	directions[toExtract] = np.random.uniform(-1,1,(toExtract.sum(),3))
+	# 	norm = np.linalg.norm(directions,axis=1)
+	# 	toExtract = norm >= 1
+	# 	i+=1
+	# 	print(i)
+	# directions /= norm[:,None]
+	# positions = np.zeros_like(directions)
+	# lensDistance = 25.5e-3
+	# lensRadius = 16e-3
+	# NA=np.sin(np.arctan(lensRadius/lensDistance))
+	# print(f"{len(Camera.hitsSpecifiedLens(positions, directions, [lensDistance,0,0],[0,0,0], lensRadius)) / 10000}, {.5*(1-np.sqrt(1-NA**2))}")
 
+	# def update_metadata_in_h5_files(folder_path, metadata_key, new_value):
+	# 	"""
+	# 	Updates the specified metadata key with a new value in all h5 files in the given folder.
+
+	# 	Args:
+	# 		folder_path (str): Path to the folder containing h5 files.
+	# 		metadata_key (str): The metadata key to update.
+	# 		new_value: The new value to set for the metadata key.
+	# 	"""
+	# 	files = [f for f in os.listdir(folder_path) if f.endswith('.h5')]
+	# 	if not files:
+	# 		raise ValueError("No h5 files found in the specified folder.")
+
+	# 	for file in files:
+	# 		file_path = os.path.join(folder_path, file)
+	# 		with h5py.File(file_path, 'r+') as f:
+	# 			if metadata_key in f.attrs:
+	# 				f.attrs[metadata_key] = new_value
+	# 				print(f"Updated {metadata_key} in {file}")
+	# 			else:
+	# 				print(f"{metadata_key} not found in {file}")
+	# update_metadata_in_h5_files("D:/simulationImages/blurs", "range", 4.6e-6 * 8)
+
+	exp = experimentViewer()
+	exp.loadAcquisition("d:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/simulation/simulation_4.h5")
+	exp.getScatteredPhotons(6e-6)
 	pass
