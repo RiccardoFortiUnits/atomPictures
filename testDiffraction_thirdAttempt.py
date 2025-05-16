@@ -293,7 +293,7 @@ class mappedFunction:
 				allSubMaps += (right.getZoomedFlatSections(epsilon, minCoveredArea, isFirst=False))
 				if len(allSubMaps) > 0:
 					return allSubMaps
-				return [self]
+				return []
 		
 		for islandIdx in range(nOfIslands):
 			island = islandMap == islandIdx + 1

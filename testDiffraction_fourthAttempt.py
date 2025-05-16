@@ -100,7 +100,7 @@ def passThroughLens(U0, k,f,R):
 
 '''-------------------------------------------------expansion formulas---------------------------------------------------------'''
 def h(xyz, k):
-	#'''
+	# '''
 	return k/(2j*np.pi*xyz[...,2]), k*xyz[...,2] + .5*k/xyz[...,2]*(xyz[...,0]**2+xyz[...,1]**2)
 	'''
 	r=np.linalg.norm(xyz,axis=-1)
@@ -199,72 +199,82 @@ lam = 399e-9#1e-6#f0/3#399e-9
 k=2*np.pi/lam
 
 pixelSize = 4.6e-6
-requestedRange = pixelSize * 8
-resolution = 150
-range_beforeLens1 = R1*2
-rangeForFft = resolution * lam * f1 / requestedRange
+requestedRange = pixelSize * 16
+resolution_beforeLens1 = 150
+resolution_objective = 150
+range_beforeLens1 = R1*2#15e-3 * 0.07
+rangeForFft = resolution_objective * lam * f1 / requestedRange
 
 metadata = {
-	"f0" 				: f0,
-	"pow" 				: pow,
-	"R0" 				: R0,
-	"f1" 				: f1,
-	"R1" 				: R1,
-	"lam" 				: lam,
-	"k" 				: k,
-	"pixelSize"			: pixelSize,
-	"requestedRange"	: requestedRange,
-	"resolution"		: resolution,
-	"range_beforeLens1"	: range_beforeLens1,
-	"rangeForFft"		: rangeForFft,
+	"f0" 						: f0,
+	"pow" 						: pow,
+	"R0" 						: R0,
+	"f1" 						: f1,
+	"R1" 						: R1,
+	"lam" 						: lam,
+	"k" 						: k,
+	"pixelSize"					: pixelSize,
+	"requestedRange"			: requestedRange,
+	"resolution_objective"		: resolution_objective,
+	"resolution_beforeLens1"	: resolution_beforeLens1,
+	"range_beforeLens1"			: range_beforeLens1,
+	"rangeForFft"				: rangeForFft,
 }
+beforeLens_path = "D:/simulationImages/blurs/399nm/beforeLens/"
+objective_path = "D:/simulationImages/blurs/399nm/largerBlur/"
 
+if not os.path.exists(beforeLens_path):
+    os.makedirs(beforeLens_path)
+if not os.path.exists(objective_path):
+    os.makedirs(objective_path)
 
-zAtom = np.linspace(-2e-6, 2e-6, 41)
-contour = np.zeros((len(zAtom), resolution))
+zAtom = np.linspace(-8e-6, 8e-6, 21)
+contour = np.zeros((len(zAtom), resolution_objective))
 for i,z in enumerate(zAtom):
 	
-	beforLens_file_name = f"D:/simulationImages/blurs/399nm/beforeLens/beforeLens1_atomZ={z:.2e}.h5"
+	beforLens_file_name = f"{beforeLens_path}beforeLens1_atomZ={z:.2e}.h5"
 	if not os.path.exists(beforLens_file_name):
 		metadata["zLens0"] = zLens0=f0+z
-		metadata["zLens1"] = zLens1=zLens0+f0+f1
+		metadata["zLens1"] = zLens1=zLens0+600e-3#f0+f1
 		metadata["zObjective"] = zObjective=zLens1+f1
 
 		U_beforeLens0 = dipoleField(k)
 		U_afterLens0 = passThroughLens(U_beforeLens0, k, f0, R0)
+		plot2D_function(addStaticY(toComplex(U_beforeLens0),0),[0,R0*1.1],[f0*.5,f0],40,40, "U_beforeLens0_xz")
+		plot2D_function(addStaticZ(toComplex(U_afterLens0),zLens0),[0,R0*1.1],[0,R0*1.1],40,40, "U_beforeLens0_xz")
 
 		U_beforeLens1 = expandInFreeSpace(U_afterLens0,[[-R0,R0],[-R0,R0]],zLens0,k)
-		# plot2D_function(addStaticY(U_beforeLens1,0), [0,R0*1.1],[zLens0 + .5*f1, zLens0 + 1.5*f1],20,20, "U_beforeLens1_xz")
-		# plot2D_function(addStaticZ(U_beforeLens1,zLens1), [0,R0*1.1],[0,R0*1.1],20,20, "U_beforeLens1_xy")
+		plot2D_function(addStaticY(U_beforeLens1,0), [0,R1*1.1],[zLens0 + .5*f1, zLens0 + 1.5*f1],20,20, "U_beforeLens1_xz")
+		plot2D_function(addStaticZ(U_beforeLens1,zLens1), [0,R1*1.1],[0,R1*1.1],3,3, "U_beforeLens1_xy")
 
-		mappedFun_beforeLens1 = mappedFunction(addStaticZ(U_beforeLens1,zLens1), np.array([0,0]), np.repeat(range_beforeLens1, 2), np.repeat(resolution,2))
+		mappedFun_beforeLens1 = mappedFunction(addStaticZ(U_beforeLens1,zLens1), np.repeat(0, 2), np.repeat(range_beforeLens1, 2), np.repeat(resolution_beforeLens1,2))
 		U_beforeLens1_calculated = mappedFun_beforeLens1(mappedFun_beforeLens1.getXY())
 		# plot2D(U_beforeLens1_calculated,[-range_beforeLens1/2,range_beforeLens1/2],[-range_beforeLens1/2,range_beforeLens1/2], "fieldAtObjective")
-		
+
 		save_h5_image(beforLens_file_name, U_beforeLens1_calculated, zAtom = z, range = range_beforeLens1, **metadata)
 
-	objective_file_name = f"D:/simulationImages/blurs/399nm/camera_atomZ={z:.2e}.h5"
+	objective_file_name = f"{objective_path}camera_atomZ={z:.2e}.h5"
 	if not os.path.exists(objective_file_name):
 		#let's get it from the file
 		U_beforeLens1_calculated, loadedMetadata = load_h5_image(beforLens_file_name, returnMetadata=True)
-
+		# U_beforeLens1_calculated = mirrorSymmetricImage(U_beforeLens1_calculated)
 		Range = loadedMetadata['range']
 		loadedMetadata.pop('range', None)
 		loadedMetadata.pop('resolution', None)
 
-		U_objective = fftshift(fft2_butBetter(U_beforeLens1_calculated, np.repeat(Range,2), np.repeat(requestedRange / (lam * f1), 2), transform_n=np.repeat(resolution,2)))
+		U_objective = fftshift(fft2_butBetter(U_beforeLens1_calculated, np.repeat(Range,2), np.repeat(requestedRange / (lam * f1), 2), transform_n=np.repeat(resolution_objective,2)))
 		
-		save_h5_image(objective_file_name, U_objective, range = requestedRange, resolution = resolution, **loadedMetadata)
+		save_h5_image(objective_file_name, U_objective, range = requestedRange, resolution = resolution_objective, **loadedMetadata)
 	U_objective = load_h5_image(objective_file_name)
 
-	contour[i] = np.abs(U_objective[int(resolution/2),:])
+	contour[i] = np.abs(U_objective[int(resolution_objective/2),:])
 
 	# objective_Ray = resolution[0] * lam * f1 / Range[0] / 2
 	# plot2D(U_objective,[-requestedRange/2,requestedRange/2],[-requestedRange/2,requestedRange/2], "fieldAtObjective")
 
 
-plot2D(contour,[-requestedRange/2,requestedRange/2],[-2e-6,2e-6], "fieldAtObjective")
-plot2D(np.log10(contour),[-requestedRange/2,requestedRange/2],[-2e-6,2e-6], "fieldAtObjective")
+plot2D(contour,[-requestedRange/2,requestedRange/2],[zAtom.min(),zAtom.max()], "fieldAtObjective")
+# plot2D(np.log10(contour),[-requestedRange/2,requestedRange/2],[-2e-6,2e-6], "fieldAtObjective")
 
 
 '''-----------------------double lens with gaussian beam----------------------'''

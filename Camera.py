@@ -135,6 +135,17 @@ def fft2_butBetter(image, imageSize, transformSize, transform_n = None, paddingV
 	CorrectSizedImage = f(x,y)
 	return np.fft.fft2(CorrectSizedImage)
 		
+def mirrorSymmetricImage(image, mirrorFirstLines = False):
+	'''
+	given an image f(x>=0,y>=0), it mirrors it along the x and y axes.
+	if mirrorFirstLines is false, the first row and column are treated as the values of f(0,y) and f(x,0), and thus they won't be mirrored.
+	'''
+	toFlip = image if mirrorFirstLines else image[:,1:]
+	image = np.concatenate((np.flip(toFlip,axis=1), image), axis=1)
+	toFlip = image if mirrorFirstLines else image[1:,:]
+	image = np.concatenate((np.flip(toFlip,axis=0), image), axis=0)
+	return image
+
 def filterScatterToGrid(x,y,z,gridPoints):
 	mins = [np.min(x), np.min(y)]
 	maxs = [np.max(x), np.max(y)]
@@ -220,6 +231,12 @@ class cameraAtomImages:
 		x,y = np.meshgrid(*[np.arange(0,image.shape[i]) for i in range(2)], indexing="ij")
 		center = np.unravel_index(np.argmax(np.abs(image)), image.shape)
 		parameters, _ = curve_fit(Ar.Gaussian_2D, np.vstack((x.flatten(),y.flatten())), image.flatten(), p0=[np.max(image), *center, 1,1, 0])
+		# print(parameters[3], parameters[4])
+		return parameters[1], parameters[2]
+	@staticmethod
+	def findCenterOfGaussianSetOfImages(x,y,z):
+		center = np.unravel_index(np.argmax(np.abs(z)), z.shape)[-2:]
+		parameters, _ = curve_fit(Ar.Gaussian_2D, np.vstack((x.flatten(),y.flatten())), z.flatten(), p0=[np.max(z), *center, 1,1, 0])
 		return parameters[1], parameters[2]
 	
 
@@ -265,13 +282,13 @@ class cameraAtomImages:
 		self._tweezerPixels = np.round(centers).astype(int)
 
 	@staticmethod
-	def azimuthal_average(x,y,z, center = None, n_bins=None):
+	def azimuthal_average(x,y,z, center = None, n_bins=None, dividestandardBin = 1):
 		if center is None:
 			idx = np.unravel_index(np.argmax(z), x.shape)
 			center = x[idx],y[idx]
 		x0,y0 = center
 		if n_bins is None:
-			n_bins = int(np.ceil(np.hypot(z.shape[1],z.shape[2]) / 2))
+			n_bins = int((z.shape[1] + z.shape[2]) * dividestandardBin)
 
 		r = np.hypot(x-x0,y-y0) 
 		r_bins = np.linspace(r.min(),r.max(),n_bins+1)
@@ -285,6 +302,21 @@ class cameraAtomImages:
 		z_avg[unique] /= count
 
 		return r_bins_center, z_avg
+	@staticmethod
+	def elliptical_average(x,y,z, angle, axisRatio, center = None, n_bins=None, dividestandardBin = 1):
+		'''
+		angle:angle of the axis that will not be normalized (i.e,, which is already normalized)
+		axisRatio = length of the normalized axis / length of the perpendicular axis
+		'''
+		if center is None:
+			idx = np.unravel_index(np.argmax(z), x.shape)
+			center = x[idx],y[idx]
+		x0,y0 = center
+		x,y=x-x0,y-y0
+		x,y=x*np.cos(angle) + y*np.sin(-angle), y*np.cos(angle) - x*np.sin(-angle)
+		y *= axisRatio
+		z /= axisRatio
+		return cameraAtomImages.azimuthal_average(x,y,z, center = (0,0), n_bins=n_bins, dividestandardBin=dividestandardBin)
 
 	@property
 	def tweezerPositions(self):
@@ -313,7 +345,18 @@ class cameraAtomImages:
 	def getAtomROI_fromBooleanArray(self, roi, array, averageOnAtoms = False):
 		imgs, atoms = np.where(array)
 		return self.getAtomROIOnImages(self.images, self.tweezerPixels, roi, imgs, atoms, averageOnAtoms)
-	
+	def getAtomCoordinates(self, roi, pixelSize = 1, atomsIdx = None):
+		'''
+		returns the coordinates of the atoms in the specified roi. 
+		if atomsIdx is not specified, all the valid indexes will be considered
+		'''
+		if atomsIdx is None:
+			atomsIdx = np.arange(0, len(self.tweezerPixels.T))
+		x,y = np.meshgrid(*[np.arange(0,roi) for _ in range(2)], indexing="ij")
+		x = (x[None,:,:] - roi//2 - (self.tweezerPositions - self.tweezerPixels)[0][:,None,None]) * pixelSize
+		y = (y[None,:,:] - roi//2 - (self.tweezerPositions - self.tweezerPixels)[1][:,None,None]) * pixelSize
+		
+		return x[atomsIdx,:,:],y[atomsIdx,:,:]
 	@staticmethod
 	def getAtomROIOnImages(images, tweezerPixels, roi, imageIdx = None, atomIdx = None, averageOnAtoms = False):
 		'''
@@ -430,8 +473,8 @@ class pixelGrid:
 		coordinates = np.argwhere(self.pixels > 0)
 		counts = self.pixels[self.pixels > 0].astype(int)
 		coordinates = np.repeat(coordinates, counts, axis=0).astype(float)
-		coordinates[:,0] = (coordinates[:,0] / (self.nofXpixels - 1) - .5) * self.xsize * self.magnification
-		coordinates[:,1] = (coordinates[:,1] / (self.nofYpixels - 1) - .5) * self.ysize * self.magnification
+		coordinates[:,0] = (coordinates[:,0] / (self.nofXpixels - 1) - .5) * self.xsize
+		coordinates[:,1] = (coordinates[:,1] / (self.nofYpixels - 1) - .5) * self.ysize
 		return coordinates
 	def fillFromLens(self, rawPhotonPositions):
 		'''
@@ -439,6 +482,8 @@ class pixelGrid:
 
 		returns a dictionary with some extra info (though the default pixel grid only returns a non-empty dictionary if there's no photon to work on)
 		'''
+		magnification = np.array([self.magnification,self.magnification,1])
+		rawPhotonPositions = rawPhotonPositions * magnification[None,:rawPhotonPositions.shape[1]]
 		if len(rawPhotonPositions) == 0:
 			return {"warning:" : "no photons hitting the lens"}
 		if len(rawPhotonPositions[0]) == 3:
@@ -449,16 +494,16 @@ class pixelGrid:
 		np.add.at(self.pixels, (x_normalized, y_normalized), 1)
 		return {}
 	def fillFromOtherGrid(self, inputGrid : 'pixelGrid'):
-		psfPositions = self.PSF(inputGrid.getRawPositions())
+		psfPositions = self.PSF(inputGrid.getRawPositions() * self.magnification)
 		x_normalized, y_normalized = self._normalizeCoordinate(psfPositions[:,0], psfPositions[:,1])
 		np.add.at(self.pixels, (x_normalized, y_normalized), 1)
 	def clear(self):
 		self.pixels = np.zeros((self.nofXpixels,self.nofYpixels))
 
 class cMosGrid(pixelGrid):
-	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
+	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart = (0,0), imageSizes = None, magnification = 1):
 
-		super().__init__(xsize, ysize, nofXpixels, nofYpixels, PSF)
+		super().__init__(xsize, ysize, nofXpixels, nofYpixels, PSF, magnification)
 		self.setRandomPixelNoises(noisePictureFilePath, imageStart, imageSizes)
 
 	def setRandomPixelNoises(self, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
@@ -505,16 +550,16 @@ class refreshing_cMosGrid(cMosGrid):
 	to a "bad" pixel always being in a certain position, or other similar problems.
 	This subclass just gets random pixel values for each imaging
 	'''	
-	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
-		super().__init__(xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart, imageSizes)
+	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart = (0,0), imageSizes = None, magnification = 1):
+		super().__init__(xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart, imageSizes, magnification)
 		self.pixelNoises = self.pixelNoises.flatten()
 		
 	def addNoise(self):
 		self.pixels += np.random.choice(self.pixelNoises, self.pixels.shape, )
 
 class strayLight_cMosGrid(refreshing_cMosGrid):
-	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, avoidanceRoi = 5, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
-		pixelGrid.__init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF)
+	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, avoidanceRoi = 5, tweezerMinPixelDistance = 10, atomPeakMinValue = 1, magnification = 1):
+		pixelGrid.__init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, magnification)
 		self.setRandomPixelNoises(noisePictureFilePath, avoidanceRoi, tweezerMinPixelDistance, atomPeakMinValue)
 
 	def setRandomPixelNoises(self, noisePictureFilePath, avoidanceRoi = 5, tweezerMinPixelDistance = 10, atomPeakMinValue = 1):
@@ -952,7 +997,7 @@ class experimentViewer:
 		quiverLength = maxRange / 20
 		min_bounds = (max_bounds + min_bounds) / 2 - maxRange / 2
 		max_bounds = min_bounds + maxRange
-		for atom_idx in range(self.lastPositons.shape[1]):
+		for atom_idx in range(1):#self.lastPositons.shape[1]):
 			ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
 			ax.scatter(*self.lastPositons[0, atom_idx, :], s=20)
 			if hasattr (self, "tweezerPositions"):
@@ -970,7 +1015,7 @@ class experimentViewer:
 		# 				directions = self.lastGeneratedPhotons[laserHits[h]] * quiverLength
 		# 				ax.quiver(position[0], position[1], position[2], 
 		# 						directions[0], directions[1], directions[2], color='red')
-					# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
+		# 			# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx])
 
 		ax.set_xlabel('X Position (m)')
 		ax.set_ylabel('Y Position (m)')
@@ -1268,7 +1313,39 @@ if __name__ == '__main__':
 	# 				print(f"{metadata_key} not found in {file}")
 	# update_metadata_in_h5_files("D:/simulationImages/blurs", "range", 4.6e-6 * 8)
 
-	exp = experimentViewer()
-	exp.loadAcquisition("d:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/simulation/simulation_4.h5")
-	exp.getScatteredPhotons(6e-6)
+	# exp = experimentViewer()
+	# exp.loadAcquisition("d:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/simulation/simulation_4.h5")
+	# exp.getScatteredPhotons(6e-6)
+
+	# img = np.array([[1,2,3],[4,5,6],[7,8,9]])
+	# print(mirrorSymmetricImage(img))
+	# print(mirrorSymmetricImage(img, True))
+	# blur_z0,metadata = load_h5_image("d:/simulationImages/blurs/399nm/camera_atomZ=0.00e+00.h5", returnMetadata=True)
+	# blur_z0 = np.abs(blur_z0)**2
+	# blur_z0 = blur_z0[blur_z0.shape[0]//2,:]/np.sum(blur_z0)
+	# size = metadata["requestedRange"]
+	# pixelSize = 4.6e-6
+	# # Create a pixel response function (rectangular function of width pixelSize)
+	# x = np.linspace(-size/2, size/2, blur_z0.shape[0])
+	# pixel_response = np.where(np.abs(x) <= pixelSize/2, 1, 0)
+	# plt.plot(x, pixel_response * np.max(blur_z0), label='pixel')
+	# pixel_response = pixel_response / np.sum(pixel_response)  # Normalize
+
+	# # Convolve blur_z0 with the pixel response
+	# blur_z0_pixel = np.convolve(blur_z0, pixel_response, mode='same')
+	# def gaussian(x, A, mu, sigma, offset):
+	# 	return A * np.exp(-2 * ((x - mu) / sigma) ** 2) + offset
+
+	# # Initial guess: amplitude, mean, stddev, offset
+	# p0 = [np.max(blur_z0_pixel), 0, pixelSize, np.min(blur_z0_pixel)]
+	# params, cov = curve_fit(gaussian, x, blur_z0_pixel, p0=p0)
+
+	# fit_curve = gaussian(x, *params)
+	# plt.plot(x, fit_curve, label='Gaussian fit')
+	# print("Fitted parameters: A = {:.3g}, mu = {:.3g}, sigma = {}, offset = {:.3g}".format(*params))
+	# plt.plot(x, blur_z0, label='blur function (camera space)')
+	# plt.plot(x, blur_z0_pixel, label='Convolved with pixel')
+	
+	# plt.legend()
+	# plt.show()
 	pass
