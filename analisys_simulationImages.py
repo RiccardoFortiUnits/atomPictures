@@ -80,20 +80,20 @@ names += ["12us", "5us", "12us_z-lattice", "12us_fixedAtom"]
 '''
 sim_files = [
 	# "D:/simulationImages/magnified_Yt171_20us_10tweezerArray/correctMagnification_outOfFocus0.0e+00m_7us_pictures",
-	"D:/simulationImages/magnified_Yt171_20us_10tweezerArray/correctMagnification_outOfFocus0.0e+00m_12us_pictures",
+	# "D:/simulationImages/magnified_Yt171_20us_10tweezerArray/correctMagnification_outOfFocus0.0e+00m_12us_pictures",
 	# "D:/simulationImages/magnified_Yt171_20us_10tweezerArray/correctMagnification_outOfFocus0.0e+00m_20us_pictures",
 	# "D:/simulationImages/magnified_Yt171_20us_10tweezerArray_atomUnmovable/correctMagnification_outOfFocus0.0e+00m_12us_pictures",
 	# "D:/simulationImages/magnified_Yt171_20us_10tweezerArray/correctMagnification_outOfFocus0.0e+00m_12us_pictures_10reduction",
 	# "D:/simulationImages/magnified_Yt171_20us_10tweezerArray_z_lattice/correctMagnification_outOfFocus0.0e+00m_12us_pictures_10reduction",
-	# "D:/simulationImages/magnified_Yt171_20us_10tweezerArray_atomUnmovable/correctMagnification_outOfFocus0.0e+00m_12us_pictures_10reduction",
+	"D:/simulationImages/magnified_Yt171_20us_10tweezerArray_atomUnmovable/correctMagnification_outOfFocus0.0e+00m_12us_pictures_10reduction",
 
 	# "D:/simulationImages/magnified_Yt171_20us_10tweezerArray/correctMagnification_outOfFocus0.0e+00m_7us_pictures",
 	# "D:/simulationImages/magnified_Yt171_20us_10tweezerArray/correctMagnification_outOfFocus0.0e+00m_12us_pictures_10reduction",
 #   "D:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/12us_pictures",
 #   "D:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/outOfFocus1.0e-06m_12us_pictures",
-  "D:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/outOfFocus2.0e-06m_12us_pictures",
+#   "D:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/outOfFocus2.0e-06m_12us_pictures",
 #   "D:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/outOfFocus3.0e-06m_12us_pictures",
-  "D:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/outOfFocus4.0e-06m_12us_pictures",
+#   "D:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/outOfFocus4.0e-06m_12us_pictures",
 ]
 names += ["std simulation", "offset 2um", "offset 4um"]#,"simulation_smallerPixel", "simul. un-movable atom_smallerPixel"]           #[f"simulation" for i in range(len(sim_files))]#[f"offset {i}um" for i in [4]]#[0,4,1,2,3]]
 #'''
@@ -169,7 +169,7 @@ for i in range(len(sim_files)):
 plt.figure("azimutal average")
 # names = ["5us", "12us", "12us_real"]
 for i, (coords, name, valForEllipse) in enumerate(zip(coordinates, names, valuesForEllpiticFit)):
-	if i < len(exp_files):
+	if False and i < len(exp_files):
 		r,az = Camera.cameraAtomImages.elliptical_average(*coords,valForEllipse[2], valForEllipse[0]/valForEllipse[1], (0,0),dividestandardBin=2)
 	else:
 		r,az = Camera.cameraAtomImages.azimuthal_average(*coords,(0,0),dividestandardBin=2)

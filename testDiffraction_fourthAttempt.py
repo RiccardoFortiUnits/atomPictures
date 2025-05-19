@@ -28,8 +28,14 @@ def addStaticYZ(function, y, z):
 	return f
 def toComplex(a):
 	def u(*x):
+		ray,phase=a(*x)
+		phase = np.nan_to_num(phase, nan=0)
+		return ray*np.exp(phase*1j)
+	return u
+def toRayAngle(a):
+	def u(*x):
 		q=a(*x)
-		return q[0]*np.exp(q[1]*1j)
+		return np.abs(q), np.angle(q)
 	return u
 
 '''-------------------------------------------------basic fields---------------------------------------------------------'''
@@ -224,9 +230,9 @@ beforeLens_path = "D:/simulationImages/blurs/399nm/beforeLens/"
 objective_path = "D:/simulationImages/blurs/399nm/largerBlur/"
 
 if not os.path.exists(beforeLens_path):
-    os.makedirs(beforeLens_path)
+	os.makedirs(beforeLens_path)
 if not os.path.exists(objective_path):
-    os.makedirs(objective_path)
+	os.makedirs(objective_path)
 
 zAtom = np.linspace(-8e-6, 8e-6, 21)
 contour = np.zeros((len(zAtom), resolution_objective))
@@ -240,16 +246,15 @@ for i,z in enumerate(zAtom):
 
 		U_beforeLens0 = dipoleField(k)
 		U_afterLens0 = passThroughLens(U_beforeLens0, k, f0, R0)
-		plot2D_function(addStaticY(toComplex(U_beforeLens0),0),[0,R0*1.1],[f0*.5,f0],40,40, "U_beforeLens0_xz")
-		plot2D_function(addStaticZ(toComplex(U_afterLens0),zLens0),[0,R0*1.1],[0,R0*1.1],40,40, "U_beforeLens0_xz")
+		# plot2D_function(addStaticY(toComplex(U_beforeLens0),0),[0,R0*1.1],[f0*.5,f0],40,40, "U_beforeLens0_xz")
+		# plot2D_function(addStaticZ(toComplex(U_afterLens0),zLens0),[0,R0*1.1],[0,R0*1.1],40,40, "U_beforeLens0_xz")
 
 		U_beforeLens1 = expandInFreeSpace(U_afterLens0,[[-R0,R0],[-R0,R0]],zLens0,k)
-		plot2D_function(addStaticY(U_beforeLens1,0), [0,R1*1.1],[zLens0 + .5*f1, zLens0 + 1.5*f1],20,20, "U_beforeLens1_xz")
-		plot2D_function(addStaticZ(U_beforeLens1,zLens1), [0,R1*1.1],[0,R1*1.1],3,3, "U_beforeLens1_xy")
-
+		# plot2D_function(addStaticY(U_beforeLens1,0), [0,R1*1.1],[zLens0 + .5*f1, zLens0 + 1.5*f1],20,20, "U_beforeLens1_xz")
+		# plot2D_function(addStaticZ(U_beforeLens1,zLens1), [0,R1*1.1],[0,R1*1.1],3,3, "U_beforeLens1_xy")
 		mappedFun_beforeLens1 = mappedFunction(addStaticZ(U_beforeLens1,zLens1), np.repeat(0, 2), np.repeat(range_beforeLens1, 2), np.repeat(resolution_beforeLens1,2))
-		U_beforeLens1_calculated = mappedFun_beforeLens1(mappedFun_beforeLens1.getXY())
-		# plot2D(U_beforeLens1_calculated,[-range_beforeLens1/2,range_beforeLens1/2],[-range_beforeLens1/2,range_beforeLens1/2], "fieldAtObjective")
+		U_lens1Block = passThroughLens(toRayAngle(mappedFun_beforeLens1), 0,1,R1)#just to cut the field outside of the lens
+		U_beforeLens1_calculated = toComplex(U_lens1Block)(mappedFun_beforeLens1.getXY())
 
 		save_h5_image(beforLens_file_name, U_beforeLens1_calculated, zAtom = z, range = range_beforeLens1, **metadata)
 
