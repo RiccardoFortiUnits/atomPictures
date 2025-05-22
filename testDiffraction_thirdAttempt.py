@@ -185,7 +185,7 @@ class mappedFunction:
 		#get the local minima and maxima
 		grad_x, grad_y = np.gradient(map, axis=(0, 1))
 		grad = np.sqrt(grad_x**2 + grad_y**2)
-		for usedMap in [map,-map,grad]:
+		for usedMap in [map,-map, grad]:
 			minMap = np.nan_to_num(usedMap, nan=-np.inf)
 			minFilteredMap = minimum_filter(minMap, size=3, mode='constant', cval=-np.inf)#let's not consider values on the borders of the map
 			minFilteredMap = np.logical_and(minFilteredMap == usedMap, minFilteredMap != -np.inf)
@@ -196,8 +196,7 @@ class mappedFunction:
 	
 		minimaCoords = np.argwhere(allPonds)
 		for xy in minimaCoords:
-			x=xy[0]
-			y=xy[1]
+			x,y=xy
 			pondCenter = map[x,y]
 			pondedMap = np.abs(map - pondCenter) < pondDepth
 			pond = mappedFunction.get_connected_points(pondedMap, x,y)

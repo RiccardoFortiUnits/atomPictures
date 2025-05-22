@@ -16,11 +16,13 @@ from mpl_toolkits.mplot3d import Axes3D
 from scipy import constants, signal
 import scipy.optimize as opt
 import ArQuS_analysis_lib as Ar
+from scipy.ndimage import convolve
 
 def plot2D(Z, x_range, y_range, figureTitle=""):
 	if Z.dtype == np.complex128:
 		plt.figure(figureTitle + " (abs value)")
 		plt.imshow((np.abs(Z.T)), extent=(y_range[0], y_range[1], x_range[0], x_range[1]), origin='lower', cmap='viridis', aspect='auto')
+		plt.colorbar()
 		plt.show()
 		Z=np.angle(Z)
 		figureTitle = f"{figureTitle} (angle)"
@@ -1314,7 +1316,7 @@ if __name__ == '__main__':
 	# update_metadata_in_h5_files("D:/simulationImages/blurs", "range", 4.6e-6 * 8)
 
 	# exp = experimentViewer()
-	# exp.loadAcquisition("d:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/simulation/simulation_4.h5")
+	# exp.loadAcquisition("d:/simulationImages/correctScattering_Yt171_12us_10tweezerArray/simulation/\/.h5")
 	# exp.getScatteredPhotons(6e-6)
 
 	# img = np.array([[1,2,3],[4,5,6],[7,8,9]])
@@ -1348,4 +1350,20 @@ if __name__ == '__main__':
 	
 	# plt.legend()
 	# plt.show()
-	pass
+	files = [f"D:/simulationImages/magnified_Yt171_20us_10tweezerArray/simulation/simulation_{i}.h5" for i in range(0, 1)]
+	exp = experimentViewer()
+	for file in files:
+		metadata = exp.loadAcquisition(file)
+		for i in range(exp.lastPositons.shape[1]):
+			with h5py.File(file.replace(".h5",f"atom{i}.h5"), 'w') as f:
+				data = exp.lastPositons[:, i, :]
+				data = data[np.logical_not(np.isnan(data).any(axis=1))]
+				center = metadata["tweezer_centers"][i]
+				data -= center[None,:]
+				
+				plt.plot(
+					data[:, 2], label=f'Atom {i+1}')
+				f.create_dataset("positions", data=exp.lastPositons[:, i, :])
+				f.close()
+		plt.show()
+pass
