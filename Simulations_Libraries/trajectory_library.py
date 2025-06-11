@@ -228,8 +228,10 @@ class Laser(Beam):
 			self.switchActiveTime = switchingTimes[1]
 			self.startingTime = switchingTimes[0]
 			def enableLaser(t):
-				t = (t - self.startingTime) % self.switchPeriod
-				return t < self.switchActiveTime
+				t = (t - self.startingTime)
+				if t < 0:
+					return False
+				return t % self.switchPeriod < self.switchActiveTime
 			function = lambda coordinate_tuple, t = 0 : GaussianBeam(coordinate_tuple, wavelength, w0[0], w0[1], Intensity) if enableLaser(t) else 0
 		elif not callable(function):
 			raise ValueError(f'The function must be callable, got {type(function)} instead')
@@ -382,6 +384,43 @@ def v_givenT (T,m):
 
 def T_givenV (v,m):
 	return m*v**2/(3*kB)
+
+def MB_energy_distr(E,T):
+    """
+    Maxwell-Boltzmann energy distribution from Wikipedia
+    """
+    return 2*np.sqrt(E/np.pi)*(1/(kB*T))**1.5 *np.exp(-E/(kB*T))
+
+def HO_energy(n,omega):
+    """
+    Energy of quantum harmonic oscillator
+    """
+    return hbar*omega*(n+1/2)
+
+def extract_coordinates_rms(T, omega, m, N_atoms = 1):
+    """
+    Extract harmonic oscillator rms cooridnates n:
+    """
+    # Maximum considerd harmonic oscillator level to normalize distributin
+    n_max = 30
+    normalizz = np.amax(MB_energy_distr(E = HO_energy(np.arange(0,n_max),omega),T = T))
+
+    # Monte Carlo sampling of the energy distribution: extract an array of n
+    counter = 0
+    n_all = []
+    while counter < N_atoms:
+        n_test = np.random.randint(0,n_max)
+        if np.random.uniform(0,1) < MB_energy_distr(HO_energy(n_test,omega),T)/normalizz:
+            n_all.append(n_test)
+            counter+=1
+    n_all = np.asarray(n_all)
+
+    # Compute rms from the extracted n
+    position_rms = np.sqrt(hbar/(2*m*omega)*(2*n_all+1)) # initial RMS position
+    velocity_rms = np.sqrt(hbar*omega/(2*m)*(2*n_all+1))  # initial RMS velocity    
+
+    return position_rms, velocity_rms
+
 
 ##############################################################
 ################## Atom motion simulation ####################
