@@ -137,7 +137,21 @@ class Ytterbium(Atom):
 		self.m = Isotope.m
 
 class Beam:
-	def __init__(self, angle, x0, function):
+	def __init__(self, angle, x0, function, max_dt_function = None):
+		'''
+		class that represents a generic field (usually a light beam or an electromagnetic field) in 3D.
+			-angle: a tuple or list with the angles of the beam in the XY, XZ and YZ planes, respectively.
+			If a single value is given, this angle will be considered as the angle in the XY plane, while the other 2 are kept at 0.
+			-x0: a tuple or list with the coordinates of the center of the beam in the X, Y and Z axes, respectively.
+			If a single value is given, this value will be considered as the x coordinate, while the other 2 are kept at 0.
+			-function: function representing the intensity of the beam at a given set of coordinates. The coordinates 
+			are given as a tuple (x,y,z). In the definition of the function, consider to include some additional parameters 
+			(example: time t). In any case, better to add argument **kwargs to avoid errors when the function is called 
+			with additional unused parameters).
+			-max_dt_function: function with which you can tell the maximum time step in a simulation (from a certain time t) 
+			for which the beam intensity should be constant. This should improve the preformance of the simulation, increasing 
+			the time steps when "nothing happens" and reducing it when the beam inteniy is having fast changes.
+		'''
 		if isinstance(angle,list) or isinstance(angle, tuple):
 			self.angleXY = angle[0]
 			self.angleXZ = angle[1]
@@ -156,6 +170,7 @@ class Beam:
 			self.z0 = 0
 		self._originalFuntion = function
 		self.function = lambda coordinate_tuple, **kwargs : function(CoordinateChange_extended(coordinate_tuple,self.x0, self.y0, self.z0, self.angleXY, self.angleXZ, self.angleYZ), **kwargs)
+		self.__max_dt_function = max_dt_function
 	@property
 	def angle(self):
 		return (self.angleXY, self.angleXZ, self.angleYZ)
@@ -169,34 +184,34 @@ class Beam:
 	def __add__(self, other: Beam):
 		if type(other) == Beam:
 			#if a Beam is combined with another, it should not have an intrinsic direction
-			return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)+other(coordinate_tuple, **kwargs))
+			return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)+other(coordinate_tuple, **kwargs), Beam.combineMax_dt(self.max_dt, other.max_dt))
 		if isinstance(other, (int, float, np.number)):
 			#let's give the new beam the same direction as the original one
-			return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)+other)
+			return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)+other, self.max_dt)
 		raise ValueError('Sum not defined for Beam and '+str(type(other)))
 	def __sub__(self, other):
 		if type(other) == Beam:
-			return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)-other(coordinate_tuple, **kwargs))
+			return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)-other(coordinate_tuple, **kwargs), Beam.combineMax_dt(self.max_dt, other.max_dt))
 		if isinstance(other, (int, float, np.number)):
-			return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)-other)
+			return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)-other, self.max_dt)
 		raise ValueError('Subtraction not defined for Beam and '+str(type(other)))
 	def __mul__(self, other):
 		if type(other) == Beam:
-			return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)*other(coordinate_tuple, **kwargs))
+			return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)*other(coordinate_tuple, **kwargs), Beam.combineMax_dt(self.max_dt, other.max_dt))
 		if isinstance(other, (int, float, np.number)):
-			return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)*other)
+			return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)*other, self.max_dt)
 		raise ValueError('Multiplication not defined for Beam and '+str(type(other)))
 	def __truediv__(self, other):
 		if type(other) == Beam:
-			return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)/other(coordinate_tuple, **kwargs))
+			return Beam(0,0, lambda coordinate_tuple, **kwargs: self(coordinate_tuple, **kwargs)/other(coordinate_tuple, **kwargs), Beam.combineMax_dt(self.max_dt, other.max_dt))
 		if isinstance(other, (int, float, np.number)):
-			return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)/other)
+			return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: self._originalFuntion(coordinate_tuple, **kwargs)/other, self.max_dt)
 		raise ValueError('Division not defined for Beam and '+str(type(other)))
 	def __div__(self, other):
 		return self.__truediv__(other)
 	
 	def withExtraFunction(self, extra_function):
-		return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: extra_function(self._originalFuntion(coordinate_tuple, **kwargs)))
+		return Beam(self.angle, self.center, lambda coordinate_tuple, **kwargs: extra_function(self._originalFuntion(coordinate_tuple, **kwargs)), self.max_dt)
 	
 	@property
 	def direction(self):
@@ -213,8 +228,19 @@ class Beam:
 													   planeCenter[0], planeCenter[1], planeCenter[2], 
 													   planeRotation[0], planeRotation[1], planeRotation[2]))
 		plot_2d_function(f, y_range, z_range, resolution)
+	@staticmethod
+	def combineMax_dt(function1, function2):
+		if function1 is None:
+			return function2
+		if function2 is None:
+			return function1
+		return lambda t: min(function1(t), function2(t))
+	def max_dt(self, t = 0):
+		if self.__max_dt_function is None:
+			return np.inf
+		return self.__max_dt_function(t)
 class Laser(Beam):
-	def __init__(self, angle, x0, wavelength, Intensity, w0, function = None, refractive_index = 1, switchingTimes = None):#switchingTimes = [dt, startTime, activeTime, inactiveTime]
+	def __init__(self, angle, x0, wavelength, Intensity, w0, function = None, refractive_index = 1, switchingTimes = None, max_dt_function = None):#switchingTimes = [startTime, activeTime, inactiveTime]
 		self.wavelength = wavelength
 		self.intensity = Intensity
 		if not isinstance(w0, (list, tuple)):
@@ -232,11 +258,46 @@ class Laser(Beam):
 				if t < 0:
 					return False
 				return t % self.switchPeriod < self.switchActiveTime
-			function = lambda coordinate_tuple, t = 0 : GaussianBeam(coordinate_tuple, wavelength, w0[0], w0[1], Intensity) if enableLaser(t) else 0
+			originalFunction = function
+			function = lambda coordinate_tuple, t = 0 : originalFunction(coordinate_tuple, t=t) if enableLaser(t) else 0
+			def dtForSwitchingTimes(t):
+				t -= self.startingTime
+				if t < 0:
+					return -t
+				t = t % self.switchPeriod
+				if t < self.switchActiveTime:
+					return self.switchActiveTime - t
+				return self.switchPeriod - t
+				
+			original_max_dt_function = max_dt_function
+			max_dt_function = Beam.combineMax_dt(original_max_dt_function, dtForSwitchingTimes)
 		elif not callable(function):
 			raise ValueError(f'The function must be callable, got {type(function)} instead')
 		
-		super().__init__(angle, x0, function)
+		super().__init__(angle, x0, function, max_dt_function)
+	@staticmethod
+	def counterPropagatingLasers(angle, x0, wavelength, Intensity, w0, impulseDuration, deadTime = 0, halfFirstPeriod = True, initialTimeOff = 0, function = None, refractive_index = 1, max_dt_function = None):
+		if function is None:
+			function = lambda coordinate_tuple, **kwargs: GaussianBeam(coordinate_tuple, wavelength, w0[0], w0[1], Intensity)
+		if halfFirstPeriod:
+			removeFirstHalf = lambda coordinate_tuple, t = 0 : function(coordinate_tuple, t=t) if t >= initialTimeOff else 0
+			halfPeriod_max_dt_function = Beam.combineMax_dt(max_dt_function, lambda t: initialTimeOff - t if t < initialTimeOff else np.inf)
+			halfPeriod = impulseDuration / 2
+		else:
+			removeFirstHalf = function
+			halfPeriod_max_dt_function = max_dt_function
+			halfPeriod = 0
+			
+		right = Laser(angle, x0, wavelength, Intensity, w0, function = removeFirstHalf, max_dt_function = halfPeriod_max_dt_function, refractive_index = refractive_index,
+				 switchingTimes = [initialTimeOff - halfPeriod, impulseDuration, impulseDuration + deadTime * 2])
+		if isinstance(angle, tuple):
+			angle = (angle[0] + np.pi, angle[1] + np.pi, angle[2] + np.pi)
+		else:
+			angle = angle + np.pi
+		left = Laser(angle, x0, wavelength, Intensity, w0, function = function, max_dt_function = max_dt_function, refractive_index = refractive_index,
+				 switchingTimes = [initialTimeOff - halfPeriod + impulseDuration + deadTime, impulseDuration, impulseDuration + deadTime * 2])
+		return right, left
+		
 	def reset(self):
 		if hasattr(self, 'initialTime'):
 			self.time = self.initialTime
@@ -386,40 +447,40 @@ def T_givenV (v,m):
 	return m*v**2/(3*kB)
 
 def MB_energy_distr(E,T):
-    """
-    Maxwell-Boltzmann energy distribution from Wikipedia
-    """
-    return 2*np.sqrt(E/np.pi)*(1/(kB*T))**1.5 *np.exp(-E/(kB*T))
+	"""
+	Maxwell-Boltzmann energy distribution from Wikipedia
+	"""
+	return 2*np.sqrt(E/np.pi)*(1/(kB*T))**1.5 *np.exp(-E/(kB*T))
 
 def HO_energy(n,omega):
-    """
-    Energy of quantum harmonic oscillator
-    """
-    return hbar*omega*(n+1/2)
+	"""
+	Energy of quantum harmonic oscillator
+	"""
+	return hbar*omega*(n+1/2)
 
 def extract_coordinates_rms(T, omega, m, N_atoms = 1):
-    """
-    Extract harmonic oscillator rms cooridnates n:
-    """
-    # Maximum considerd harmonic oscillator level to normalize distributin
-    n_max = 30
-    normalizz = np.amax(MB_energy_distr(E = HO_energy(np.arange(0,n_max),omega),T = T))
+	"""
+	Extract harmonic oscillator rms cooridnates n:
+	"""
+	# Maximum considerd harmonic oscillator level to normalize distributin
+	n_max = 30
+	normalizz = np.amax(MB_energy_distr(E = HO_energy(np.arange(0,n_max),omega),T = T))
 
-    # Monte Carlo sampling of the energy distribution: extract an array of n
-    counter = 0
-    n_all = []
-    while counter < N_atoms:
-        n_test = np.random.randint(0,n_max)
-        if np.random.uniform(0,1) < MB_energy_distr(HO_energy(n_test,omega),T)/normalizz:
-            n_all.append(n_test)
-            counter+=1
-    n_all = np.asarray(n_all)
+	# Monte Carlo sampling of the energy distribution: extract an array of n
+	counter = 0
+	n_all = []
+	while counter < N_atoms:
+		n_test = np.random.randint(0,n_max)
+		if np.random.uniform(0,1) < MB_energy_distr(HO_energy(n_test,omega),T)/normalizz:
+			n_all.append(n_test)
+			counter+=1
+	n_all = np.asarray(n_all)
 
-    # Compute rms from the extracted n
-    position_rms = np.sqrt(hbar/(2*m*omega)*(2*n_all+1)) # initial RMS position
-    velocity_rms = np.sqrt(hbar*omega/(2*m)*(2*n_all+1))  # initial RMS velocity    
+	# Compute rms from the extracted n
+	position_rms = np.sqrt(hbar/(2*m*omega)*(2*n_all+1)) # initial RMS position
+	velocity_rms = np.sqrt(hbar*omega/(2*m)*(2*n_all+1))  # initial RMS velocity    
 
-    return position_rms, velocity_rms
+	return position_rms, velocity_rms
 
 
 ##############################################################
@@ -1194,7 +1255,8 @@ class experiment(experimentViewer):
 				positions.append(A.position)
 				# assume the atom would experience the same fields if it doesn't move too much and if not too much time passes (But we'll have to still consider gravity)
 				timeToReachMax_dx = max_dx / np.linalg.norm(A.velocity) if np.linalg.norm(A.velocity) > 0 else np.inf
-				maxT = np.maximum(np.minimum(max_dt, timeToReachMax_dx), min_dt)
+				maxTimeForLasers = self.max_dt_fromLasers(t)
+				maxT = np.maximum(min(max_dt, timeToReachMax_dx, maxTimeForLasers), min_dt)
 				if maxT == min_dt:
 					maxT += 0
 				if True: #excitedTime <= 0:#are we in the ground state?
@@ -1265,4 +1327,9 @@ class experiment(experimentViewer):
 			if updateFunction is not None:
 				updateFunction(index = i, experiment = self)
 			self.reset()
+	def max_dt_fromLasers(self, t):
+		dt = np.inf
+		for laser in self.lasers:
+			dt = np.minimum(dt, laser.max_dt(t))
+		return dt
 		

@@ -46,7 +46,7 @@ def pointField(k):
 	field of a particle in (0,0,0)
 	'''
 	def U0(xyz):
-		'''
+		# '''
 		r=np.linalg.norm(xyz, axis=-1)
 		cosAlpha = xyz[...,2]/r	
 		return k / (2j*np.pi) * cosAlpha / r, k*r
@@ -135,9 +135,7 @@ def h(xyz, k):
 	'''
 	r=np.linalg.norm(xyz,axis=-1)
 	cosTheta=xyz[...,2]/r
-	return cosTheta/r**2 * k / (2j*np.pi), k*r
-	# z=xyz[...,2]
-	# return -1/(2*np.pi)*z/r**2*(1j*k-1/r), k*r
+	return cosTheta/r * k / (2j*np.pi), k*r
 	#'''
 def impulseExpansionInFreeSpace(xyz1, U0, xyz0, k):
 	rh, ah = h(xyz1-xyz0, k)
@@ -249,6 +247,7 @@ def expandInFreeSpace(U0, xy0_ranges,z0=0, k=1):
 		return integral
 	return U1
 
+
 if __name__ == "__main__":
 	'''-----------------------------------test with gaussian beam-------------------------------------------------------'''
 	# w0=50e-6
@@ -285,9 +284,9 @@ if __name__ == "__main__":
 
 	pixelSize = 4.6e-6
 	requestedRange = pixelSize * 16
-	resolution_beforeLens1 = 50
+	resolution_beforeLens1 = 150
 	resolution_objective = 150
-	range_beforeLens1 = 2*R1#15e-3 * 0.07
+	range_beforeLens1 = R1*2#15e-3 * 0.07
 	rangeForFft = resolution_objective * lam * f1 / requestedRange
 
 	metadata = {
@@ -305,15 +304,15 @@ if __name__ == "__main__":
 		"range_beforeLens1"			: range_beforeLens1,
 		"rangeForFft"				: rangeForFft,
 	}
-	beforeLens_path = "D:/simulationImages/blurs/noApprox_399nm/beforeLens/"
-	objective_path = "D:/simulationImages/blurs/noApprox_399nm/largerBlur/"
+	beforeLens_path = "D:/simulationImages/blurs/399nm/beforeLens/"
+	objective_path = "D:/simulationImages/blurs/399nm/largerBlur/"
 
 	if not os.path.exists(beforeLens_path):
 		os.makedirs(beforeLens_path)
 	if not os.path.exists(objective_path):
 		os.makedirs(objective_path)
 
-	zAtom = np.linspace(0, 8e-6, 3)
+	zAtom = np.linspace(-1e-6, 1e-6, 21)
 	contour = np.zeros((len(zAtom), resolution_objective))
 	for i,z in enumerate(zAtom):
 		
@@ -323,21 +322,18 @@ if __name__ == "__main__":
 			metadata["zLens1"] = zLens1=zLens0+600e-3#f0+f1
 			metadata["zObjective"] = zObjective=zLens1+f1
 
-			U_beforeLens0 = pointField(k)#gaussian_beam(2e-3,k)
+			U_beforeLens0 = dipoleField(k)
 			U_afterLens0 = passThroughLens(U_beforeLens0, k, f0, R0)
 			# plot2D_function(addStaticY(toComplex(U_beforeLens0),0),[0,R0*1.1],[f0*.5,f0],40,40, "U_beforeLens0_xz")
-			# plot2D_function(addStaticZ(toComplex(U_afterLens0),zLens0),[-R0*1.1,R0*1.1],[-R0*1.1,R0*1.1],800,800, "U_afterLens0_xz")
+			# plot2D_function(addStaticZ(toComplex(U_afterLens0),zLens0),[0,R0*1.1],[0,R0*1.1],40,40, "U_beforeLens0_xz")
 
 			U_beforeLens1 = expandInFreeSpace(U_afterLens0,[[-R0,R0],[-R0,R0]],zLens0,k)
-			plot2D_function(addStaticY(U_beforeLens1,0), [0,R1*1.1],[zLens0 + .01*f0, zLens0 + 1.5*f1],20,20, "U_beforeLens1_xz")
-			# plot2D_function(addStaticZ(U_beforeLens1,zLens1), [0,R1*1.1],[0,R1*1.1],20,20, "U_beforeLens1_xy")
-			
-			mappedFun_beforeLens1 = mappedFunction(addStaticZ(U_beforeLens1,zLens1), np.repeat(range_beforeLens1/2, 2), np.repeat(range_beforeLens1, 2), np.repeat(resolution_beforeLens1,2))
+			# plot2D_function(addStaticY(U_beforeLens1,0), [0,R1*1.1],[zLens0 + .5*f1, zLens0 + 1.5*f1],20,20, "U_beforeLens1_xz")
+			# plot2D_function(addStaticZ(U_beforeLens1,zLens1), [0,R1*1.1],[0,R1*1.1],3,3, "U_beforeLens1_xy")
+			mappedFun_beforeLens1 = mappedFunction(addStaticZ(U_beforeLens1,zLens1), np.repeat(0, 2), np.repeat(range_beforeLens1, 2), np.repeat(resolution_beforeLens1,2))
 			U_lens1Block = passThroughLens(toRayAngle(mappedFun_beforeLens1), 0,1,R1)#just to cut the field outside of the lens
 			U_beforeLens1_calculated = toComplex(U_lens1Block)(mappedFun_beforeLens1.getXY())
-			plot2D(mirrorSymmetricImage(U_beforeLens1_calculated),[-range_beforeLens1/2,range_beforeLens1/2],[-range_beforeLens1/2,range_beforeLens1/2], "fieldAtObjective")
-			a=0
-			a[2]=3
+
 			save_h5_image(beforLens_file_name, U_beforeLens1_calculated, zAtom = z, range = range_beforeLens1, **metadata)
 
 		objective_file_name = f"{objective_path}camera_atomZ={z:.2e}.h5"
@@ -388,8 +384,6 @@ if __name__ == "__main__":
 
 	# 	U_beforeLens0 = gaussian_beam(w0,k)
 	# 	U_afterLens0 = passThroughLens(U_beforeLens0, k, f0, R0)
-	# 	plot2D_function(addStaticY(toComplex(U_beforeLens0),0),[0,R0*1.1],[f0*.5,f0],40,40, "U_beforeLens0_xz")
-	# 	plot2D_function(addStaticZ(toComplex(U_afterLens0),zLens0),[-R0*1.1,R0*1.1],[-R0*1.1,R0*1.1],800,800, "U_beforeLens0_xz")
 
 	# 	U_beforeLens1 = expandInFreeSpace(U_afterLens0,[[-R0,R0],[-R0,R0]],zLens0,k)
 
@@ -412,4 +406,4 @@ if __name__ == "__main__":
 	# plt.plot(np.linspace(-requestedRange/2,requestedRange/2, resolution[0]),np.abs(U_objective[int(resolution[0]/2),:]))
 	# plt.show()
 
-	a=0
+	# a=0

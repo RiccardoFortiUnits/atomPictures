@@ -212,6 +212,17 @@ def getImagesFrom_h5_files(folderPath, internalPath = None, maxPictures = None):
 
 	return images, metadata
 
+def getIndexesAndFractionalPosition(values, grid):
+	'''
+	find the values i, p so that
+	for each j, values[j] =  grid[i[j]] + p[j] * (grid[i[j]+1] - grid[i[j]]),
+	'''
+	i = np.searchsorted(grid, values, side='right') - 1
+	i[i >= len(grid) -1] = len(grid) - 2
+	x0 = grid[i]
+	x1 = grid[i + 1]
+	p = (values - x0) / (x1 - x0)
+	return i, p
 '''---------------------------------------------------------------------------------'''
 
 class cameraAtomImages:
@@ -521,13 +532,33 @@ class cMosGrid(pixelGrid):
 		self.pixels += self.pixelNoises[np.arange(self.pixels.shape[0])[:, None], np.arange(self.pixels.shape[1]), np.random.randint(self.pixelNoises.shape[2], size=self.pixels.shape)]
 
 	@staticmethod	
-	def getPictures(path, imageStart = (0,0), imageSizes = None):
+	def getPictures(path, imageStart = (0,0), imageSizes = None, pictureLimit = None):
 		files_to_analyse = os.listdir(path)
+		if pictureLimit is not None:
+			files_to_analyse = files_to_analyse[:pictureLimit]
 		
 		raw_images = None
+		def find_image_dataset(group, prefix="images"):
+				for key in group:
+					if prefix == None or key == prefix:
+						item = group[key]
+						if isinstance(item, h5py.Group):
+							# If it's a group, recurse into it
+							result = find_image_dataset(item, None)
+							if result is not None:
+								return result
+						elif isinstance(item, h5py.Dataset):
+							# If it's a dataset and the path starts with "images/"
+							return item.name
+				# If not found at this level
+				return None
 		for i, file in enumerate(files_to_analyse):
 			f = h5py.File(path+file, 'r')
-			img = np.asarray(f['images/Orca/Test_image/frame'])
+			# Recursively find the dataset path that starts with "images/"
+			img_path = find_image_dataset(f, prefix="images")
+			if img_path is None:
+				raise ValueError("No dataset found under 'images/' in the file.")
+			img = np.asarray(f[img_path])
 			if raw_images is None:
 				if imageSizes is None:
 					imageSizes = img.shape
@@ -558,6 +589,26 @@ class refreshing_cMosGrid(cMosGrid):
 		
 	def addNoise(self):
 		self.pixels += np.random.choice(self.pixelNoises, self.pixels.shape, )
+
+class fixed_cMosGrid(cMosGrid):
+	'''
+	in this cMos variant, each pixel copies the pixel that has its position in the original images.
+	the sizes of the images will be the same as the original images
+	'''	
+	def __init__(self, xsize, ysize, PSF, noisePictureFilePath, magnification = 1):
+		firstImage = cMosGrid.getPictures(noisePictureFilePath, pictureLimit=1)
+		super().__init__(xsize, ysize, *firstImage.shape[1:], PSF, noisePictureFilePath, (0,0), None, magnification)
+		
+	def addNoise(self):
+		self.pixels += self.pixelNoises[np.arange(self.pixels.shape[0])[:, None], np.arange(self.pixels.shape[1]), np.random.randint(self.pixelNoises.shape[2], size=self.pixels.shape)]
+	def setRandomPixelNoises(self, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
+		self.pixelNoises = fixed_cMosGrid.getRandomPixelNoises(self.pixels.size, noisePictureFilePath, imageStart, imageSizes)    \
+								.reshape((self.pixels.shape[0],self.pixels.shape[1], -1))
+	@staticmethod
+	def getRandomPixelNoises(nOfPixels, path, imageStart = (0,0), imageSizes = None):
+		images = cMosGrid.getPictures(path, imageStart, imageSizes)
+		pixels = images.reshape((images.shape[0], -1)).T
+		return pixels
 
 class strayLight_cMosGrid(refreshing_cMosGrid):
 	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, avoidanceRoi = 5, tweezerMinPixelDistance = 10, atomPeakMinValue = 1, magnification = 1):
@@ -662,23 +713,21 @@ class Camera:
 	@staticmethod
 	def blurFromImages(folderPath):
 		images, metadata = getImagesFrom_h5_files(folderPath)
-		z = np.array([val['zAtom'] for val in metadata.values()])
-		ordered = np.argsort(z)
+		zGrid = np.array([val['zAtom'] for val in metadata.values()])
+		ordered = np.argsort(zGrid)
 		images = np.array(images)[ordered]
-		z = z[ordered]
-		zmin, zmax = z[0], z[-1]
-		zstep = z[1] - z[0]
+		zGrid = zGrid[ordered]
 		xymin = -np.mean([val['range'] for val in metadata.values()])/2
 		xymax = -xymin
 		xystep = (xymax-xymin)/images.shape[1]
 		images = np.abs(images)**2
 		def getFromImages(x,y,z):
-			z = ((z-zmin)/(zmax-zmin) * (len(images)-1)).astype(int)
+			z,_ = getIndexesAndFractionalPosition(z, zGrid)
 			x = ((x-xymin)/(xymax-xymin) * (len(images[0])-1)).astype(int)
 			y = ((y-xymin)/(xymax-xymin) * (len(images[0][0])-1)).astype(int)
 			return images[z,x,y]
 		# plot2D_function(lambda x,z: getFromImages(x,0,z), [xymin,xymax], [zmin,zmax], len(images[0]), len(images))
-		f = randExtractor.distribFunFromPDF_2D_1D(getFromImages, [[xymin,xymax],[xymin,xymax],[zmin,zmax]], [xystep,xystep,zstep])
+		f = randExtractor.distribFunFromPDF_2D_1D(getFromImages, [[xymin,xymax],[xymin,xymax],None], [xystep,xystep,zGrid])
 		return f
 
 class randExtractor:
@@ -699,6 +748,13 @@ class randExtractor:
 	#     pdf_values = pdf(*[grid_points[..., i] for i in range(len(ranges))])
 	#     return RegularGridInterpolator(grids, pdf_values)
 	@staticmethod
+	def getGrids(ranges, steps):
+		return [(
+			np.array(s) 
+				if isinstance(s, list) or isinstance(s, tuple) or isinstance(s, np.ndarray)
+		  	else np.linspace(r[0], r[1], 1+int(np.ceil((r[1]-r[0])/s)))
+		  ) for r, s in zip(ranges, steps)]
+	@staticmethod
 	def interpolate2D_semigrid(x,y,z,valuesToInterpolate):
 		'''
 		interpolation for a function for which you have computed some values in a semi-grid 
@@ -709,10 +765,9 @@ class randExtractor:
 		z: nxm-array, z[i][j] = f(x[i], y[i][j])
 		valuesToInterpolate: px2 array
 		'''
-		#let's find where the values would be in the x axis
-		interpolatedIndex = (valuesToInterpolate[:,0]-x[0])*(len(x)-1)/(x[-1]-x[0])
-		i = interpolatedIndex.astype(int)
-		p = interpolatedIndex - i.astype(float)
+		#let's find where the values would be in the x axis, and how far they are from the corresponding value in x
+		i, p = getIndexesAndFractionalPosition(valuesToInterpolate[:, 0], x)
+
 		averageY = (y[i].T*(1-p)+y[i+1].T*p).T
 		averageZ = (z[i].T*(1-p)+z[i+1].T*p).T
 		return np.array([np.interp(valuesToInterpolate[:,1][j], averageY[j], averageZ[j]) for j in range(len(i))])
@@ -725,13 +780,10 @@ class randExtractor:
 		f: nxmxp-array, f[i][j][k] = f(x[i], y[j], z[i][j][k])
 		valuesToInterpolate: qx3 array
 		'''
-		#let's find where the values would be in the x axis
-		interpolatedIndex = (valuesToInterpolate[:,0]-x[0])*(len(x)-1)/(x[-1]-x[0])
-		x_i = interpolatedIndex.astype(int)
-		x_p = (interpolatedIndex - x_i.astype(float))[:,None]
-		interpolatedIndex = (valuesToInterpolate[:,1]-y[0])*(len(y)-1)/(y[-1]-y[0])
-		y_i = interpolatedIndex.astype(int)
-		y_p = (interpolatedIndex - y_i.astype(float))[:,None]
+		
+		x_i, x_p = getIndexesAndFractionalPosition(valuesToInterpolate[:, 0], x)
+		y_i, y_p = getIndexesAndFractionalPosition(valuesToInterpolate[:, 1], y)
+		x_p, y_p = x_p[:,None], y_p[:,None]
 		averageZ =	z[x_i	,	y_i]	* (1-x_p)	* (1-y_p)	+ \
 			  		z[x_i+1	,	y_i]	* (x_p)		* (1-y_p)	+ \
 			  		z[x_i	,	y_i+1]	* (1-x_p)	* (y_p)		+ \
@@ -746,7 +798,7 @@ class randExtractor:
 	@staticmethod
 	def distribFunFromPDF_2D(pdf, ranges, steps):        
 		# Create a meshgrid for the given ranges and steps
-		grids = [np.linspace(r[0], r[1], 1+int(np.ceil((r[1]-r[0])/s))) for r, s in zip(ranges, steps)]
+		grids = randExtractor.getGrids(ranges, steps)
 		meshed_grids = np.meshgrid(*grids, indexing='ij')
 		grid_points = np.stack(meshed_grids, axis=-1)
 
@@ -794,7 +846,7 @@ class randExtractor:
 		# Create a meshgrid for the given ranges and steps
 		ranges = [xrange,trange]
 		steps = [xstep,tstep]
-		grids = [np.linspace(r[0], r[1], 1+int(np.ceil((r[1]-r[0])/s))) for r, s in zip(ranges, steps)]
+		grids = randExtractor.getGrids(ranges, steps)
 		meshed_grids = np.meshgrid(*grids, indexing='ij')
 		grid_points = np.stack(meshed_grids, axis=-1)
 
@@ -814,7 +866,7 @@ class randExtractor:
 		#use this distribution generator for 1D functions (PDF(x) | integr(PDF(x) dx) = 1)
 		#the generated extractor accepts a will return a random value x that follows the given PDF
 
-		grid = np.linspace(ranges[0], ranges[1], 1+int(np.ceil((ranges[1]-ranges[0])/steps)))
+		grid = randExtractor.getGrids([ranges], [steps])[0]
 
 		pdf_values = pdf(grid)
 		cdf_values_x = np.cumsum(pdf_values)
@@ -833,7 +885,7 @@ class randExtractor:
 		To extract the result it chooses a random point of the grid (according to the given PDF) and 
 		adds a random displacement inside its "cell"
 		'''
-		grids = [np.linspace(r[0], r[1], 1+int(np.ceil((r[1]-r[0])/s))) for r, s in zip(ranges, steps)]
+		grids = randExtractor.getGrids(ranges, steps)
 		meshed_grids = np.meshgrid(*grids, indexing='ij')
 		grid_points = np.stack(meshed_grids, axis=-1)
 		
@@ -866,7 +918,7 @@ class randExtractor:
 		#use this distribution generator for 2D functions with an extra control dimension t (PDF(x,y,t) | integr(PDF(x,y,t) dxdy) = 1 for each t)
 		#the generated extractor will take as inputs the value t (and an offset for (x,y)) and return a random value (x,y)
 		# Create a meshgrid for the given ranges and steps
-		grids = [np.linspace(r[0], r[1], 1+int(np.ceil((r[1]-r[0])/s))) for r, s in zip(xyt_ranges, xyt_steps)]
+		grids = randExtractor.getGrids(xyt_ranges, xyt_steps)
 		meshed_grids = np.meshgrid(*grids, indexing='ij')
 		grid_points = np.stack(meshed_grids, axis=-1)
 
@@ -898,6 +950,7 @@ class experimentViewer:
 	'''to do analysis of pre-computed runs, I don't want to create the entire experiment object 
 	(which would also require to include a bunch of very heavy libraries). This class contains 
 	all the necessary to load/save/show data'''
+	# lastTimings:            array[nOfTimes][nOfAtoms] time of each instant for each atom
 	# lastPositons:           array[nOfTimes][nOfAtoms][3] positions of each atom at each time frame
 	# lastHits:               array{timeIndex, atomIndex, laserIndex}[nOfHits] all the recorded, specifies the time, atom and laser involved in the hit
 	# lastGeneratedPhotons:   array[nOfHits][3] the generated photons for each hit
@@ -946,6 +999,12 @@ class experimentViewer:
 			startPositions = np.zeros((0,3))
 			directions = np.zeros((0,3))
 		return startPositions, directions
+	def positionsAtTime(self, time):
+		positions = np.zeros(self.lastPositons.shape[1:])
+		for atom_idx in range(len(positions)):
+			timeIndex = np.searchsorted(self.lastTimings[:,atom_idx], time)
+			positions[atom_idx] = self.lastPositons[timeIndex, atom_idx]
+		return positions
 	def plotTrajectoriesAndCameraAcquisition(self, camera : Camera):
 		hitPositions, hitIdx = camera.hitLens(self.lastPositons[self.lastHits[0], self.lastHits[1]], self.lastGeneratedPhotons, returnHitIndexes=True)
 		hitCamera = np.zeros((len(self.lastHits[0])), dtype=bool)
@@ -993,30 +1052,30 @@ class experimentViewer:
 		min_atomBounds = np.nanmin(self.lastPositons, axis=0)
 		max_atomBounds = np.nanmax(self.lastPositons, axis=0)
 		atomRanges = max_atomBounds - min_atomBounds
-		min_bounds = min_atomBounds[0]#np.nanmin(self.lastPositons, axis=(0, 1))
-		max_bounds = max_atomBounds[0]#np.nanmax(self.lastPositons, axis=(0, 1))
+		min_bounds = np.nanmin(self.lastPositons, axis=(0, 1))
+		max_bounds = np.nanmax(self.lastPositons, axis=(0, 1))
 		maxRange = np.maximum(np.nanmax(max_bounds - min_bounds), 1e-9)
 		quiverLength = maxRange / 20
 		min_bounds = (max_bounds + min_bounds) / 2 - maxRange / 2
 		max_bounds = min_bounds + maxRange
-		for atom_idx in range(1):#self.lastPositons.shape[1]):
+		for atom_idx in range(self.lastPositons.shape[1]):
 			ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
 			ax.scatter(*self.lastPositons[0, atom_idx, :], s=20)
 			if hasattr (self, "tweezerPositions"):
 				ax.scatter(*self.tweezerPositions[atom_idx], s=30, color=plt.gca().lines[-1].get_color())
-		# if self.hasHits:
-		# 	for laser_idx in range(np.max(self.lastHits[2])+1):
-		# 		laserHits = np.where(self.lastHits[2] == laser_idx)[0]
-		# 		if len(laserHits) > 0:
-		# 			time_idx = self.lastHits[0][laserHits]
-		# 			atom_idx = self.lastHits[1][laserHits]
-		# 			ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
-		# 					label=f'laser {laser_idx+1} hits', s=5)
-		# 			for h in range(len(laserHits)):
-		# 				position = self.lastPositons[time_idx[h], atom_idx[h]]
-		# 				directions = self.lastGeneratedPhotons[laserHits[h]] * quiverLength
-		# 				ax.quiver(position[0], position[1], position[2], 
-		# 						directions[0], directions[1], directions[2], color='red')
+		if self.hasHits:
+			for laser_idx in range(np.max(self.lastHits[2])+1):
+				laserHits = np.where(self.lastHits[2] == laser_idx)[0]
+				if len(laserHits) > 0:
+					time_idx = self.lastHits[0][laserHits]
+					atom_idx = self.lastHits[1][laserHits]
+					ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
+							label=f'laser {laser_idx+1} hits', s=5)
+					# for h in range(len(laserHits)):
+					# 	position = self.lastPositons[time_idx[h], atom_idx[h]]
+					# 	directions = self.lastGeneratedPhotons[laserHits[h]] * quiverLength
+					# 	ax.quiver(position[0], position[1], position[2], 
+					# 			directions[0], directions[1], directions[2], color='red')
 		# 			# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx])
 
 		ax.set_xlabel('X Position (m)')
