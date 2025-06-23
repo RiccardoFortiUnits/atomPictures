@@ -51,7 +51,7 @@ if usedCase == fixedAtom:
 '''-------------------------------pixels and camera------------------------------'''
 pixelScale = 1#                                                                       10.
 pixelType = "" if pixelScale == 1 else f"_{int(pixelScale)}reduction"
-nPixels = np.array([100,100]) * int(pixelScale)
+nPixels = np.array([108,108]) * int(pixelScale)
 pixelSize = 4.6e-6 / pixelScale
 magnification = 8
 cameraSize = pixelSize*nPixels
@@ -70,7 +70,7 @@ max_dt = 1e-5
 min_dt = 1e-10
 max_dx = twzWaist / 10
 impulseDuration = 400e-9
-freeFlightTime = 1e-4#the imaging laser beams won't be active until this time (this time is counted inside experimentDuration)
+freeFlightTime = 3e-4#the imaging laser beams won't be active until this time (this time is counted inside experimentDuration)
 acquisitionDuration = 12e-6
 maxAcquisitionDuration = acquisitionDuration#let's do a longer simulation, so in case we want to use a larger acquisition duration, we already have the simulation data
                                                 #otherwise, just keep it equal to acquisitionDuration
@@ -123,7 +123,8 @@ for repeat in range(1000):
 
 		# result = exp.run(experimentDuration, dt)#2-50us        
 		result = exp.new_run(experimentDuration, max_dt, min_dt, max_dx)
-		positionAfterTimeOfFlight = exp.positionsAtTime(freeFlightTime)
+		positionAfterTimeOfFlight = exp.positionsAtTime(freeFlightTime) * magnificationGrid.magnification
+		pixelPositionAfterTimeOfFlight = magnificationGrid._normalizeCoordinate(-positionAfterTimeOfFlight[:,0], positionAfterTimeOfFlight[:,1], removeOutOfBoundaryValues=False)
 		metadata = dict(
 			max_dt = max_dt,
 			min_dt = min_dt,
@@ -144,6 +145,7 @@ for repeat in range(1000):
 			fillProbability = fillProbability,
 			atomFilling = filling,
 			positionAfterTimeOfFlight = positionAfterTimeOfFlight,
+			pixelPositionAfterTimeOfFlight = pixelPositionAfterTimeOfFlight,
 
 			lens0_radius = c.radius,
 			magnification = magnification,
