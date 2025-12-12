@@ -826,6 +826,42 @@ class randExtractor:
 		return randExtractor(get_x_y)
 	
 	@staticmethod
+	def distribFunFromPDF_3D(pdf, ranges, steps):        
+		# Create a meshgrid for the given ranges and steps
+		grids = randExtractor.getGrids(ranges, steps)
+		meshed_grids = np.meshgrid(*grids, indexing='ij')
+		grid_points = np.stack(meshed_grids, axis=-1)
+
+		pdf_values = pdf(*[grid_points[..., i] for i in range(len(ranges))])
+
+		#generic probability of finding x (independently from the value of y)
+		pdf_values_x = np.sum(pdf_values, axis=(1,2))
+		cdf_values_x = np.cumsum(pdf_values_x)
+		cdf_values_x /= cdf_values_x[-1]
+		cdf_values_x[0] = 0#if the first value is not 0, when we then interpolate it is possible that the random number is lower than this value, and thus the interpolation will return an invalid number
+		inverse_cdf_x_interp = interp1d(cdf_values_x, grids[0], kind='linear', fill_value="extrapolate")
+
+		#probability of finding y, given a fixed value for x
+		pdf_values_y_givenX = np.sum(pdf_values, axis=2)
+		cdf_values_y = np.cumsum(pdf_values_y_givenX, axis = 1)
+		cdf_values_y = (cdf_values_y.T / cdf_values_y[ :,-1]).T
+		
+		cdf_values_y[:,0]=0#if the first value is not 0, when we then interpolate it is possible that the random number is lower than this value, and thus the interpolation will return NaN
+
+		#probability of finding z, given a fixed value for x and y
+		cdf_values_z = np.cumsum(pdf_values, axis = 2)
+		cdf_values_z = (cdf_values_z.T / cdf_values_z[:, :,-1].T).T
+		cdf_values_z[:,:,0]=0#if the first value is not 0, when we then interpolate it is possible that the random number is lower than this value, and thus the interpolation will return NaN
+
+		def get_x_y(offsets, *t):
+			rand = np.random.random(np.shape(offsets))
+			x = inverse_cdf_x_interp(rand[:,0])
+			y = randExtractor.interpolate2D_semigrid(grids[0], cdf_values_y, meshed_grids[1][:,:,0], np.column_stack((x,rand[:,1])))
+			z = randExtractor.interpolate3D_semigrid(grids[0], grids[1], cdf_values_z, meshed_grids[2], np.column_stack((x, y, rand[:,2])))
+			return offsets + np.column_stack((x,y,z))
+		return randExtractor(get_x_y)
+	
+	@staticmethod
 	def distribFunFromradiusPDF_2D_1D(pdf, xrange, xstep, trange, tstep):
 		#use this distribution generator for 2D radial functions (r=sqrt(x^2+y^2)) with an extra control dimension t (PDF(r,t) | integr(PDF(x,t) dx) = 1 for each t)
 		#the generated extractor will take as inputs the value t (and an offset for (x,y)) and return a random value (x,y)
@@ -1409,20 +1445,68 @@ if __name__ == '__main__':
 	
 	# plt.legend()
 	# plt.show()
-	files = [f"D:/simulationImages/magnified_Yt171_20us_10tweezerArray/simulation/simulation_{i}.h5" for i in range(0, 1)]
-	exp = experimentViewer()
-	for file in files:
-		metadata = exp.loadAcquisition(file)
-		for i in range(exp.lastPositons.shape[1]):
-			with h5py.File(file.replace(".h5",f"atom{i}.h5"), 'w') as f:
-				data = exp.lastPositons[:, i, :]
-				data = data[np.logical_not(np.isnan(data).any(axis=1))]
-				center = metadata["tweezer_centers"][i]
-				data -= center[None,:]
+	# files = [f"D:/simulationImages/magnified_Yt171_20us_10tweezerArray/simulation/simulation_{i}.h5" for i in range(0, 1)]
+	# exp = experimentViewer()
+	# for file in files:
+	# 	metadata = exp.loadAcquisition(file)
+	# 	for i in range(exp.lastPositons.shape[1]):
+	# 		with h5py.File(file.replace(".h5",f"atom{i}.h5"), 'w') as f:
+	# 			data = exp.lastPositons[:, i, :]
+	# 			data = data[np.logical_not(np.isnan(data).any(axis=1))]
+	# 			center = metadata["tweezer_centers"][i]
+	# 			data -= center[None,:]
 				
-				plt.plot(
-					data[:, 2], label=f'Atom {i+1}')
-				f.create_dataset("positions", data=exp.lastPositons[:, i, :])
-				f.close()
-		plt.show()
-pass
+	# 			plt.plot(
+	# 				data[:, 2], label=f'Atom {i+1}')
+	# 			f.create_dataset("positions", data=exp.lastPositons[:, i, :])
+	# 			f.close()
+	# 	plt.show()
+	# def testPDF(nx, ny, nz):
+	# 	return np.exp(-nx) * np.exp(-ny) * np.exp(-nz*.5)
+	# G = randExtractor.distribFunFromPDF_3D(lambda x,y,z: testPDF(x,y,z), [[0,4]]*3, [5e-2]*3)
+
+	def testPDF(x,y,z):
+		# if x>2:
+		# 	return 1 if y<1 else 0.1
+		# if x>1:
+		# 	return .5 if z>1 else 0.1
+		# return .25	
+		result = np.zeros_like(x)
+		result[np.logical_and(x>2,y<1)] = 1
+		result[np.logical_and(x>2,y>=1)] = 0.1
+		result[np.logical_and(x>1,np.logical_and(x<=2,z>1))] = 0.5
+		result[np.logical_and(x>1,np.logical_and(x<=2,z<=1))] = 0.1
+		result[x<=1] = .25
+		return result
+	G = randExtractor.distribFunFromPDF_3D(lambda x,y,z: testPDF(x,y,z), [[0,3],[0,2],[0,2]], [5e-2]*3)
+	
+	# def testPDF(nx, ny, nz):
+	# 	return np.exp(-(nx**2+ny**2+.05*nz**2))	
+	# G = randExtractor.distribFunFromPDF_3D(lambda x,y,z: testPDF(x,y,z), [[-5,5]]*3, [5e-2]*3)
+
+	extractedPoints = np.zeros((10000,3))
+	extractedPoints = G(extractedPoints)
+
+	# Then add this for 3D scatter plot:
+	fig = plt.figure(figsize=(10, 8))
+	ax = fig.add_subplot(111, projection='3d')
+	ax.scatter(extractedPoints[:, 0], extractedPoints[:, 1], extractedPoints[:, 2], alpha=0.1)
+	ax.set_xlabel('X')
+	ax.set_ylabel('Y')
+	ax.set_zlabel('Z')
+	ax.set_title('3D Distribution')
+	plt.show()
+	# for i in range(len(extractedPoints[0])):
+	# 	# extractedPoints[:,i] = G(np.zeros((2,1)))
+
+	plt.scatter(extractedPoints[:,0], extractedPoints[:,1],alpha=.1)
+	plt.show()
+	plt.scatter(extractedPoints[:,0], extractedPoints[:,2],alpha=.1)
+	plt.show()
+	plt.scatter(extractedPoints[:,1], extractedPoints[:,2],alpha=.1)
+	plt.show()
+	# extractedPoints = np.zeros((10000,3))
+	# extractedPoints = G(extractedPoints)
+	# plt.scatter(extractedPoints[:,1], extractedPoints[:,2],alpha=.1)
+	# plt.show()
+	pass
