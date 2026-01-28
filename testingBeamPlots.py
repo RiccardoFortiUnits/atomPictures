@@ -92,7 +92,8 @@ if not os.path.exists(simulationFolder):
 G = Camera.blurFromImages(blurFolder)
 #'''
 magnificationGrid = pixelGrid(cameraSize[0],cameraSize[1],nPixels[0],nPixels[1], lambda xy, z: G(xy, z - lensDistance), magnification=magnification)
-quantumEfficiencyGrid = fixed_cMosGrid(cameraSize[0],cameraSize[1],randExtractor.randomLosts(1-totalEfficiency), backgroundNoiseFolder)
+# quantumEfficiencyGrid = cMosGrid(cameraSize[0],cameraSize[1],nPixels[0],nPixels[1],randExtractor.randomLosts(1-totalEfficiency), backgroundNoiseFolder)
+quantumEfficiencyGrid = fixedAdjustable_cMosGrid(cameraSize[0],cameraSize[1],nPixels[0],nPixels[1],randExtractor.randomLosts(1-totalEfficiency), backgroundNoiseFolder)
 c = Camera(position=(0,0,lensDistance), 
 		orientation=(0,-np.pi/2,0), 
 		radius=lensRadius,

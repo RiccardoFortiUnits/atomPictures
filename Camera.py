@@ -521,7 +521,7 @@ class cMosGrid(pixelGrid):
 
 	def setRandomPixelNoises(self, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
 		self.pixelNoises = cMosGrid.getRandomPixelNoises(self.pixels.size, noisePictureFilePath, imageStart, imageSizes)    \
-								.reshape((self.pixels.shape[0],self.pixels.shape[1], -1))
+								.reshape((*self.pixels.shape[0:2], -1))
 	def fillFromLens(self, rawPhotonPositions):#given a photon at position (lensRadius,0), the expected pixel to be hit will be the one with coordinates (transformedLensRadius,0)
 		extraData = super().fillFromLens(rawPhotonPositions)
 		extraData["number of photons before added noise"] = self.currentNumberOfPhotons
@@ -603,13 +603,41 @@ class fixed_cMosGrid(cMosGrid):
 		self.pixels += self.pixelNoises[np.arange(self.pixels.shape[0])[:, None], np.arange(self.pixels.shape[1]), np.random.randint(self.pixelNoises.shape[2], size=self.pixels.shape)]
 	def setRandomPixelNoises(self, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
 		self.pixelNoises = fixed_cMosGrid.getRandomPixelNoises(self.pixels.size, noisePictureFilePath, imageStart, imageSizes)    \
-								.reshape((self.pixels.shape[0],self.pixels.shape[1], -1))
+								.reshape((*self.pixels.shape[0:2], -1))
 	@staticmethod
 	def getRandomPixelNoises(nOfPixels, path, imageStart = (0,0), imageSizes = None):
 		images = cMosGrid.getPictures(path, imageStart, imageSizes)
 		pixels = images.reshape((images.shape[0], -1)).T
 		return pixels
 
+class fixedAdjustable_cMosGrid(cMosGrid):
+	'''
+	same as fixed_cMosGrid, but you can specify the size of the images. In that case, 
+	only a subsection of the real images will be used. Of course, the size has to be 
+	the same or smaller than the original image sizes
+	'''	
+	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart = None, magnification = 1):
+		'''		
+		if imageStart is not specified, the taken subimages will be centered on the real images (as if you wrote imageStart=realImageSize // 2 - imageSize // 2)
+		'''
+		firstImage = cMosGrid.getPictures(noisePictureFilePath, pictureLimit=1 )
+		realImageSize = np.array(firstImage.shape[1:])
+		finalImageSize = np.array((nofXpixels, nofYpixels))
+		if imageStart is None:
+			imageStart = realImageSize // 2 - finalImageSize // 2
+		super().__init__(xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart, (nofXpixels, nofYpixels), magnification = magnification)
+		
+	def addNoise(self):
+		self.pixels += self.pixelNoises[np.arange(self.pixels.shape[0])[:, None], np.arange(self.pixels.shape[1]), np.random.randint(self.pixelNoises.shape[2], size=self.pixels.shape)]
+	def setRandomPixelNoises(self, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
+		self.pixelNoises = fixed_cMosGrid.getRandomPixelNoises(self.pixels.size, noisePictureFilePath, imageStart, imageSizes)    \
+								.reshape((*self.pixels.shape[0:2], -1))
+	@staticmethod
+	def getRandomPixelNoises(nOfPixels, path, imageStart = (0,0), imageSizes = None):
+		images = cMosGrid.getPictures(path, imageStart, imageSizes)
+		pixels = images.reshape((images.shape[0], -1)).T
+		return pixels
+	
 class strayLight_cMosGrid(refreshing_cMosGrid):
 	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, avoidanceRoi = 5, tweezerMinPixelDistance = 10, atomPeakMinValue = 1, magnification = 1):
 		pixelGrid.__init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, magnification)
@@ -793,6 +821,38 @@ class randExtractor:
 			  		f[x_i	,	y_i+1]	* (1-x_p)	* (y_p)		+ \
 					f[x_i+1	,	y_i+1]	* (x_p)		* (y_p)
 		return np.array([np.interp(valuesToInterpolate[:,2][j], averageZ[j], averageF[j]) for j in range(len(averageZ))])
+	# @staticmethod
+	# def interpolateND_semigrid(grids, lastAxisValues, f, valuesToInterpolate):
+	# 	'''
+	# 	grids: (n0-array, n1-array, ...)
+	# 	lastAxisValues: n0*n1*...*p-array
+	# 	f: n0*n1*...*p-array, f[i][j]...[k] = f(grids[0][i], grids[1][j], ..., z[i][j]...[k])
+	# 	valuesToInterpolate: q*(len(grids)+1) array
+	# 	'''
+	# 	D = len(grids)
+	# 	x_i = np.zeros((D, len(valuesToInterpolate)))
+	# 	x_p = np.zeros_like(x_i)
+	# 	for i in range(D):
+	# 		x_i[i, :, 0], x_p[i] = getIndexesAndFractionalPosition(valuesToInterpolate[:, i], grids[i])
+
+	# 	x_p, y_p = x_p[...,None], y_p[...,None]
+		
+	# 	combinations = np.array(np.meshgrid(*([[0, 1]]*D), indexing='ij')).reshape(D, -1).T
+	# 	averageZ = np.zeros((len(valuesToInterpolate)))
+	# 	averageF = 
+
+	# 	for i in range(len(combinations)):
+	# 		aver
+
+	# 	averageZ =	z[x_i	,	y_i]	* (1-x_p)	* (1-y_p)	+ \
+	# 		  		z[x_i+1	,	y_i]	* (x_p)		* (1-y_p)	+ \
+	# 		  		z[x_i	,	y_i+1]	* (1-x_p)	* (y_p)		+ \
+	# 				z[x_i+1	,	y_i+1]	* (x_p)		* (y_p)
+	# 	averageF =	f[x_i	,	y_i]	* (1-x_p)	* (1-y_p)	+ \
+	# 		  		f[x_i+1	,	y_i]	* (x_p)		* (1-y_p)	+ \
+	# 		  		f[x_i	,	y_i+1]	* (1-x_p)	* (y_p)		+ \
+	# 				f[x_i+1	,	y_i+1]	* (x_p)		* (y_p)
+	# 	return np.array([np.interp(valuesToInterpolate[:,2][j], averageZ[j], averageF[j]) for j in range(len(averageZ))])
 
 
 	@staticmethod
