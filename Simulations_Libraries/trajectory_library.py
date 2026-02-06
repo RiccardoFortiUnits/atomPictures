@@ -14,7 +14,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pylab as pl
 import seaborn as sns
 import scipy
-from sympy.physics.wigner import clebsch_gordan, wigner_3j,wigner_6j
+#from sympy.physics.wigner import clebsch_gordan, wigner_3j,wigner_6j
 import scipy.constants as const
 import numba as nu
 from tqdm.notebook import tqdm
@@ -117,24 +117,24 @@ class Atom:
 class Ytterbium(Atom):
 
 	# Initialise ytterbium atoms 
-	Yb_171 = yblib.Yb(171,170.936323,1/2)
-	Yb_173 = yblib.Yb(173,172.938208,5/2)
-	Yb_174 = yblib.Yb(174,173.938859,0)
+    Yb_171 = yblib.Yb(171,170.936323,1/2)
+    Yb_173 = yblib.Yb(173,172.938208,5/2)
+    Yb_174 = yblib.Yb(174,173.938859,0)
 
-	def __init__(self, x,y,z,vx,vy,vz, isotope = 174):
-		super().__init__(x, y, z, vx, vy, vz)
-		Isotope = [self.Yb_171, None, self.Yb_173, self.Yb_174][isotope - 171]
+    def __init__(self, x,y,z,vx,vy,vz, isotope = 174):
+        super().__init__(x, y, z, vx, vy, vz)
+        Isotope = [self.Yb_171, None, self.Yb_173, self.Yb_174][isotope - 171]
 		# State(Isotope, name, S, L, J)
-		_1S0 = yblib.State(Isotope,"1S0",0,0,0)
-		_1P1 = yblib.State(Isotope,"1P1",0,0,1)
-		_3P1 = yblib.State(Isotope,"3P1",1,1,1)
+        _1S0 = yblib.State(Isotope,"1S0",0,0,0)
+        _1P1 = yblib.State(Isotope,"1P1",0,0,1)
+        _3P1 = yblib.State(Isotope,"3P1",1,1,1)
 
 		## GS (1S0) Transitions (g.s., e.s., lambda (m), 2pi Gamma (s^-1), *I_sat (mW/cm^2)):
-		GS_Transitions = []
-		GS_Transitions.append(yblib.Transition(_1S0,_1P1,398.911*nm,183.02*MHz,59.97)) # values of lambda and gamma from Riegger Table B.1
-		GS_Transitions.append(yblib.Transition(_1S0,_3P1,555.802*nm,1.15*MHz,0.139))
-		self.transitions = GS_Transitions
-		self.m = Isotope.m
+        GS_Transitions = []
+        GS_Transitions.append(yblib.Transition(_1S0,_1P1,398.911*nm,183.02*MHz,59.97)) # values of lambda and gamma from Riegger Table B.1
+        GS_Transitions.append(yblib.Transition(_1S0,_3P1,555.802*nm,1.15*MHz,0.139))
+        self.transitions = GS_Transitions
+        self.m = Isotope.m
 
 class Beam:
 	def __init__(self, angle, x0, function, max_dt_function = None):
@@ -452,35 +452,109 @@ def MB_energy_distr(E,T):
 	"""
 	return 2*np.sqrt(E/np.pi)*(1/(kB*T))**1.5 *np.exp(-E/(kB*T))
 
+def QHO_Thermal_Energy_Distribution(n,omega,T):
+	"""
+	QHO Energy Distribution
+	"""
+	x = hbar*omega/(kB*T)
+	return (1-np.exp(-x))*np.exp(-n*x)
+
+def QHO_3D_Thermal_Energy_Distribution(nx, ny, nz, omegaX, omegaY, omegaZ,T):
+	"""
+	QHO Energy Distribution
+	"""
+	x = hbar*omegaX/(kB*T)
+	y = hbar*omegaY/(kB*T)
+	z = hbar*omegaZ/(kB*T)
+	return (1-np.exp(-x)) * np.exp(-nx*x) * (1-np.exp(-y)) * np.exp(-ny*y) * (1-np.exp(-z)) * np.exp(-nz*z)
+
+# Spatial Distribution 
+def QHO_1D_Spatial_Distribution(q,qRMS):
+    return 1/np.sqrt(2*np.pi*(qRMS**2)) * np.exp(- 0.5*((q/qRMS)**2))
+
+
+
 def HO_energy(n,omega):
 	"""
 	Energy of quantum harmonic oscillator
 	"""
 	return hbar*omega*(n+1/2)
 
-def extract_coordinates_rms(T, omega, m, N_atoms = 1):
+def extract_coordinates_rms(T, omega, m, N_atoms,n_average, n_max_coeff = 30):
 	"""
 	Extract harmonic oscillator rms cooridnates n:
 	"""
 	# Maximum considerd harmonic oscillator level to normalize distributin
-	n_max = 30
-	normalizz = np.amax(MB_energy_distr(E = HO_energy(np.arange(0,n_max),omega),T = T))
+	n_max = n_average*n_max_coeff
+# 	normalizz = np.amax(MB_energy_distr(E = HO_energy(np.arange(0,n_max),omega),T = T))
+	normalizz = np.amax(QHO_Thermal_Energy_Distribution(n = np.arange(0,n_max),omega = omega,T = T))
 
 	# Monte Carlo sampling of the energy distribution: extract an array of n
 	counter = 0
 	n_all = []
 	while counter < N_atoms:
 		n_test = np.random.randint(0,n_max)
-		if np.random.uniform(0,1) < MB_energy_distr(HO_energy(n_test,omega),T)/normalizz:
+# 		if np.random.uniform(0,1) < MB_energy_distr(HO_energy(n_test,omega),T)/normalizz:
+		if np.random.uniform(0,1) < QHO_Thermal_Energy_Distribution(n = n_test,omega = omega,T = T)/normalizz:
 			n_all.append(n_test)
 			counter+=1
 	n_all = np.asarray(n_all)
 
-	# Compute rms from the extracted n
-	position_rms = np.sqrt(hbar/(2*m*omega)*(2*n_all+1)) # initial RMS position
-	velocity_rms = np.sqrt(hbar*omega/(2*m)*(2*n_all+1))  # initial RMS velocity    
 
-	return position_rms, velocity_rms
+def extract_3D_coordinates_rms(T, omegaX, omegaY, omegaZ, m, N_atoms, n_averages, n_max_coeff = 30):
+	"""
+	Extract harmonic oscillator rms cooridnates n:
+	"""
+	# Maximum considerd harmonic oscillator level to normalize distributin
+	n_max = n_averages*n_max_coeff
+    
+	normX = np.amax(QHO_Thermal_Energy_Distribution(n = np.arange(0,n_max[0]),omega = omegaX,T = T))
+	normY = np.amax(QHO_Thermal_Energy_Distribution(n = np.arange(0,n_max[1]),omega = omegaY,T = T))
+	normZ = np.amax(QHO_Thermal_Energy_Distribution(n = np.arange(0,n_max[2]),omega = omegaZ,T = T))
+                    
+	normalization = normX*normY*normZ
+    
+    
+	# Monte Carlo sampling of the energy distribution: extract an array of (3,N_atoms)
+	counter = 0
+	n_all = []
+    
+	while counter < N_atoms:
+        
+		n_test = np.array([np.random.randint(0,n_max[0]),np.random.randint(0,n_max[1]),np.random.randint(0,n_max[2])])
+		distributionValue = QHO_3D_Thermal_Energy_Distribution(
+                            nx = n_test[0], 
+                            ny = n_test[1], 
+                            nz = n_test[2], 
+                            omegaX = omegaX,
+                            omegaY = omegaY, 
+                            omegaZ = omegaZ,
+                            T = T
+                            )
+        
+		if np.random.uniform(0,1) < distributionValue/normalization:
+			n_all.append(n_test)
+			counter+=1
+            
+	n_all = np.asarray(n_all)
+    
+    # Compute rms from the extracted n
+    
+	x_rms = np.sqrt( hbar / (2*m*omegaX) * (2*n_all[:,0] + 1) )
+	y_rms = np.sqrt( hbar / (2*m*omegaY) * (2*n_all[:,1] + 1) )
+	z_rms = np.sqrt( hbar / (2*m*omegaZ) * (2*n_all[:,2] + 1) )
+    
+	vx_rms = np.sqrt( hbar*omegaX / (2*m) * (2*n_all[:,0] + 1) )
+	vy_rms = np.sqrt( hbar*omegaY / (2*m) * (2*n_all[:,1] + 1) )
+	vz_rms = np.sqrt( hbar*omegaZ / (2*m) * (2*n_all[:,2] + 1) )
+    
+	positions_rms = np.array([x_rms,y_rms,z_rms])
+	velocities_rms = np.array([vx_rms,vy_rms,vz_rms])
+ 
+  
+
+	return positions_rms, velocities_rms 
+
 
 
 ##############################################################
@@ -1041,7 +1115,7 @@ def ScatteringRate_2Level_Doppler3D_Bfield(transition, wavelength, E_0,k, v, Zee
 	w = 2*np.pi*c/wavelength - np.dot(k,v) - 2*np.pi*ZeemanShift
 	w0 = transition.Omega 
 	Gamma = transition.Gamma 
-	MatrixElemSquared = 3*np.pi*eps_0*hbar*c**3/w0**3*transition.Gamma
+	MatrixElemSquared = 3*np.pi*eps_0*hbar*c**3/w0**3*transition.Gamma # 2J+1 / 2J +1 MISSING ???
 	OmegaRabiSquared = MatrixElemSquared*E_0**2/hbar**2
 	return OmegaRabiSquared/Gamma / (1 + 2*OmegaRabiSquared/Gamma**2 + 4*(w-w0)**2 /Gamma**2)
 
@@ -1162,13 +1236,22 @@ class experiment(experimentViewer):
 	@staticmethod
 	def standardAppliedForce(a : Atom, *args):
 		return np.array([0,0,-g])
+
+
 	@staticmethod
-	def TweezerForce(kx,kyz):
-		k=np.array([kx,kyz,kyz])
+	def ODTForce(kx, ky, kz):
+		k= - np.array([kx,ky,kz])
 		def force(a : Atom, *args):
-			return np.dot(k,a.position) +np.array([0,0,-g])
+			return np.multiply(k,a.position) +np.array([0,0,-g])
 		return force
 	
+	@staticmethod
+	def TweezerForce(kr, kz):
+		k= - np.array([kr, kr, kz])
+		def force(a : Atom, *args):
+			return np.multiply(k,a.position) +np.array([0,0,-g])
+		return force
+    
 
 	def reset(self):
 		for atom in self.atoms:
@@ -1234,11 +1317,12 @@ class experiment(experimentViewer):
 		self.lastHits = np.where(is_NotNone(hits))
 		self.lastGeneratedPhotons = np.array(list(hits[self.lastHits]))
 		return positions
-	def new_run(self, time = 1e-6, max_dt = 1e-8, min_dt = 1e-11, max_dx = 1e-8):
+	def new_run(self, time = 1e-6,trapDuration = 0, trapType = 'ODT',trapFreq_r = 1e4, trapFreq_a= 1e4,  max_dt = 1e-8, min_dt = 1e-11, max_dx = 1e-8, trapFreqX = 1e4, trapFreqY = 1e4, trapFreqZ = 1e4):
 		ZeemanShift = 0#for now, let's not use this
 
 		electricalFields = [laser.electricalField() for laser in self.lasers]
 		tot_timings = []
+		accs = []
 		tot_hits = []
 		tot_positions = []
 		tot_generatedPhotons = []
@@ -1251,6 +1335,13 @@ class experiment(experimentViewer):
 			hittingTime = np.zeros(len(self.lasers))
 			# excitedTime = 0
 			while t < time:
+				if t< trapDuration:
+					if trapType =='ODT':
+						self.force = self.ODTForce(kx = trapFreqX**2, ky = trapFreqY**2, kz = trapFreqZ**2)
+					elif trapType =='Tweezer':
+						self.force = self.TweezerForce(kr = trapFreq_r**2, kz = trapFreq_a**2)
+				else:
+					self.force = self.standardAppliedForce
 				timings.append(t)
 				positions.append(A.position)
 				# assume the atom would experience the same fields if it doesn't move too much and if not too much time passes (But we'll have to still consider gravity)
@@ -1259,17 +1350,19 @@ class experiment(experimentViewer):
 				maxT = np.maximum(min(max_dt, timeToReachMax_dx, maxTimeForLasers), min_dt)
 				if maxT == min_dt:
 					maxT += 0
-				if True: #excitedTime <= 0:#are we in the ground state?
+                
+				if len(self.lasers)!=0: #excitedTime <= 0:#are we in the ground state?
 					#let's check if the atom would be hit by a laser during the time step
 					for i, laser in enumerate(electricalFields):
 						#extract the random times at which each laser would hit the atom
 						hitProbability = ScatteringRate_2Level_Doppler3D_Bfield(A.transitions[0],laser.wavelength,laser(A.X, A.Y, A.Z, t = t),laser.k,[A.vx,A.vy,A.vz],ZeemanShift)
 						hittingTime[i] = np.random.exponential(1 / hitProbability) if hitProbability != 0 else np.inf
-					hittingLaserIdx = np.argmin(hittingTime)
+					hittingLaserIdx =  np.argmin(hittingTime) 
 					if hittingTime[hittingLaserIdx] < maxT:#would it hit the atom during the considered time?
 						hitTime = hittingTime[hittingLaserIdx]
 						generatedPhotonKick = SpontaneousEmission_qPolarization(A.transitions[0].Lambda,A.m)
 						self.nextPointInTrajectory(A, hitTime, impulseForce_afterDt = hbar*self.lasers[hittingLaserIdx].k/A.m - generatedPhotonKick)
+						accs.append(self.force(A) +  (hbar*self.lasers[hittingLaserIdx].k/A.m - generatedPhotonKick)/hitTime )
 						t+=hitTime
 
 						hits.append([len(timings)-1, a_idx, hittingLaserIdx])
@@ -1278,8 +1371,13 @@ class experiment(experimentViewer):
 					else:
 						#no hit, let's increment the timer
 						self.nextPointInTrajectory(A, maxT)
+						accs.append(self.force(A)) 
 						t += maxT
-
+				else:
+					#no hit, let's increment the timer
+					self.nextPointInTrajectory(A, maxT)
+					accs.append(self.force(A))
+					t += maxT    
 			tot_timings.append(np.array(timings))
 			tot_positions.append(np.array(positions))
 			tot_hits += hits
@@ -1294,6 +1392,7 @@ class experiment(experimentViewer):
 		self.lastPositons = getTableWithUnevenColumns(tot_positions, np.nan)
 		self.lastHits = tuple(np.array(tot_hits).T)
 		self.lastGeneratedPhotons = np.array(tot_generatedPhotons)
+		self.accelerations = getTableWithUnevenColumns(accs, np.nan)
 		if len(self.atoms)> 0 and hasattr(self.atoms[0], "tweezerPosition"):
 			self.tweezerPositions = [a.tweezerPosition for a in self.atoms]
 		return positions
@@ -1302,7 +1401,12 @@ class experiment(experimentViewer):
 	# lastHits:               array{timeIndex, atomIndex, laserIndex}[nOfHits] all the recorded hits, specifies the time, atom and laser involved in the hit
 	# lastGeneratedPhotons:   array[nOfHits][3] the generated photons for each hit
 
+
 	
+
+
+
+
 
 	def getScatteringDistributionFromRepeatedRuns(self, time = 1e-6, stepTime = 1e-9, nOfRuns = 100, camera : Camera | None = None):
 		receivedPhotons = np.zeros(nOfRuns)
@@ -1332,4 +1436,6 @@ class experiment(experimentViewer):
 		for laser in self.lasers:
 			dt = np.minimum(dt, laser.max_dt(t))
 		return dt
-		
+    
+    
+

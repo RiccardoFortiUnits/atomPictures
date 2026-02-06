@@ -9,7 +9,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pylab as pl
 import seaborn as sns
 import scipy
-from sympy.physics.wigner import clebsch_gordan, wigner_3j,wigner_6j
+#from sympy.physics.wigner import clebsch_gordan, wigner_3j,wigner_6j
 import scipy.constants as const
 from time import sleep
 from tqdm.notebook import tqdm
