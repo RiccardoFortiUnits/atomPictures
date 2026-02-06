@@ -5,6 +5,10 @@ from scipy.stats import gaussian_kde
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 import matplotlib.patches as patches
+from scipy.stats import norm
+from scipy.stats import multivariate_normal
+from scipy.optimize import curve_fit
+
 def install_and_import(package):
 	import subprocess
 	import sys
@@ -941,3 +945,109 @@ def plot_2D_histogram(sums_first,sums_second,c_x_opt,histogram_lim = 5e-4,xlim =
 # 		for j in range (N_atoms.shape[-1]):
 # 			N_atoms[i,sums[i,:,:,:,j]>=thresholds[i,:,j]] = 1
 # 	return N_atoms
+
+
+def azimuthal_average(x,y,z,n_bins=15):
+    x0,y0 = np.mean(x), np.mean(y)
+    
+    r = np.hypot(x-x0,y-y0) 
+    r_bins = np.linspace(0,r.max(),n_bins+1)
+    r_bins_center = 0.5*(r_bins[:-1]+r_bins[1:])
+    
+    z_avg = np.zeros(n_bins)
+    
+    for i in range (n_bins):
+        mask = (r>=r_bins[i]) & (r<=r_bins[i+1])
+        if np.any(mask):
+            z_avg[i] = np.mean(z[mask])
+        else:
+            z_avg[i]=np.nan
+    
+    return z_avg,r_bins_center
+
+
+
+
+
+def AtomPositionHistogram(positionsX, positionsY, bins =7, binLimit = 10e-6, title = "Position after TOF"):
+    
+    x_edges = np.linspace(-binLimit, binLimit, bins + 1) 
+    y_edges = np.linspace(-binLimit, binLimit, bins + 1) 
+    
+    plt.figure(figsize=(6,5))
+    plt.hist2d(positionsX*1e6, positionsY*1e6, bins=[x_edges*1e6, y_edges*1e6], density=True, cmap='Blues')
+    plt.xlabel(r"$\mu$m")
+    plt.ylabel(r"$\mu$m")
+    plt.title(title)
+    plt.colorbar(label='Density')
+    plt.xlim(-binLimit*1e6, binLimit*1e6)
+    plt.ylim(-binLimit*1e6, binLimit*1e6)
+    plt.show()
+    
+    
+def AtomPositionAzimuthalAverage(positionX, positionY, bins = 5,plot = True, initial_guess =None):
+    
+    positionX = positionX*1e6
+    positionY = positionY *1e6
+    
+    histogramValues, xedges, yedges = np.histogram2d(positionX, positionY, bins=(10,10))
+
+    xValues, yValues, density = [],[],[]
+
+    for y in range(histogramValues.shape[0]):
+        for x in range(histogramValues.shape[1]):
+            xValues.append(xedges[x])
+            yValues.append(yedges[y])
+            density.append(histogramValues[x][y])
+
+    xValues = np.asarray(xValues)
+    yValues = np.asarray(yValues)
+    density = np.asarray(density)
+    
+    azimuthalAverageDensity, azimuthalPositions = azimuthal_average(xValues,yValues,density,n_bins=bins)
+    lower_bounds = [0.95,  -0.01, -np.inf]
+    upper_bounds = [1.05, 0.01,  np.inf]
+    parameters, covariance = curve_fit(gaussian,azimuthalPositions , azimuthalAverageDensity/np.max(azimuthalAverageDensity), p0 = initial_guess,bounds=(lower_bounds, upper_bounds))
+
+    
+    if plot:
+        azimuthalPositionsFit = np.linspace(0,np.max(azimuthalPositions),1000)
+        plt.figure()
+        plt.scatter(azimuthalPositions,azimuthalAverageDensity/np.max(azimuthalAverageDensity),marker='o',s=150,edgecolors='black')
+        plt.plot(azimuthalPositionsFit, gaussian(azimuthalPositionsFit, *parameters), 'r-', label='Fitted Curve', linewidth=2,color = 'red')
+        plt.xlabel(r'$\mu$m')
+        plt.ylabel('a.u.')
+
+
+        plt.title('Azimuthal average')
+        plt.legend()
+        plt.show()
+
+    
+    return parameters[1] * 1e-6, parameters[2]*1e-6
+
+
+
+def gaussian(x, A, mu, sigma):
+    """
+    1D Gaussian function.
+    A     : amplitude
+    mu    : mean (center)
+    sigma : standard deviation
+    offset: baseline offset
+    """
+    return A * np.exp(-(x - mu)**2 / (2 * sigma**2)) 
+
+
+
+
+    
+ 
+
+
+
+
+
+
+
+

@@ -17,6 +17,7 @@ from scipy import constants, signal
 import scipy.optimize as opt
 import ArQuS_analysis_lib as Ar
 from scipy.ndimage import convolve
+import matplotlib.gridspec as gridspec
 
 def plot2D(Z, x_range, y_range, figureTitle=""):
 	if Z.dtype == np.complex128:
@@ -262,6 +263,32 @@ class cameraAtomImages:
 	def averageImage(self):
 		average = np.mean(self.images, axis = 0)
 		return average
+    
+	def showImage(self, Index, planeAtomsPosition  = [], showAtomsPOsitionInPlane = False,conversionFactor = 1):
+		plt.figure() 
+		plt.imshow(self.images[Index], origin='lower', aspect='auto',cmap = 'Purples')
+		plt.colorbar(label='Intensity')
+		plt.xlabel('x')
+		plt.ylabel('y')
+		plt.title('Camera Image')
+		if showAtomsPOsitionInPlane:
+			x = -  planeAtomsPosition[0]
+			y =  planeAtomsPosition[1]
+			xCoord = np.zeros(x.shape[1])
+			yCoord = np.zeros(x.shape[1])
+			for i in range(x.shape[1]):
+				xCoord[i] = x[:,i][~np.isnan(x[:,i])][-1]* conversionFactor + self.images[Index].shape[0]/2 -0.5
+				yCoord[i] = y[:,i][~np.isnan(y[:,i])][-1]*conversionFactor +self.images[Index].shape[0]/2 -0.5
+				plt.scatter(yCoord,xCoord, marker = 'o',facecolors='none', edgecolors='r',linewidths=0.5)
+		plt.xlim(0,self.images[Index].shape[0]-0.5)
+		plt.ylim(0,self.images[Index].shape[0]-0.5)
+            
+
+		plt.show()
+        
+        
+
+
 	@staticmethod
 	def getTweezerPositions(image, tweezerMinPixelDistance = 10, atomPeakMinValue = 1.8):
 		maxes = maximum_filter(image, size=tweezerMinPixelDistance)
@@ -521,7 +548,7 @@ class cMosGrid(pixelGrid):
 
 	def setRandomPixelNoises(self, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
 		self.pixelNoises = cMosGrid.getRandomPixelNoises(self.pixels.size, noisePictureFilePath, imageStart, imageSizes)    \
-								.reshape((*self.pixels.shape[0:2], -1))
+								.reshape((self.pixels.shape[0],self.pixels.shape[1], -1))
 	def fillFromLens(self, rawPhotonPositions):#given a photon at position (lensRadius,0), the expected pixel to be hit will be the one with coordinates (transformedLensRadius,0)
 		extraData = super().fillFromLens(rawPhotonPositions)
 		extraData["number of photons before added noise"] = self.currentNumberOfPhotons
@@ -603,41 +630,43 @@ class fixed_cMosGrid(cMosGrid):
 		self.pixels += self.pixelNoises[np.arange(self.pixels.shape[0])[:, None], np.arange(self.pixels.shape[1]), np.random.randint(self.pixelNoises.shape[2], size=self.pixels.shape)]
 	def setRandomPixelNoises(self, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
 		self.pixelNoises = fixed_cMosGrid.getRandomPixelNoises(self.pixels.size, noisePictureFilePath, imageStart, imageSizes)    \
-								.reshape((*self.pixels.shape[0:2], -1))
+								.reshape((self.pixels.shape[0],self.pixels.shape[1], -1))
 	@staticmethod
 	def getRandomPixelNoises(nOfPixels, path, imageStart = (0,0), imageSizes = None):
 		images = cMosGrid.getPictures(path, imageStart, imageSizes)
 		pixels = images.reshape((images.shape[0], -1)).T
 		return pixels
-
+    
 class fixedAdjustable_cMosGrid(cMosGrid):
-	'''
-	same as fixed_cMosGrid, but you can specify the size of the images. In that case, 
-	only a subsection of the real images will be used. Of course, the size has to be 
-	the same or smaller than the original image sizes
-	'''	
-	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart = None, magnification = 1):
-		'''		
-		if imageStart is not specified, the taken subimages will be centered on the real images (as if you wrote imageStart=realImageSize // 2 - imageSize // 2)
-		'''
-		firstImage = cMosGrid.getPictures(noisePictureFilePath, pictureLimit=1 )
-		realImageSize = np.array(firstImage.shape[1:])
-		finalImageSize = np.array((nofXpixels, nofYpixels))
-		if imageStart is None:
-			imageStart = realImageSize // 2 - finalImageSize // 2
-		super().__init__(xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart, (nofXpixels, nofYpixels), magnification = magnification)
-		
-	def addNoise(self):
-		self.pixels += self.pixelNoises[np.arange(self.pixels.shape[0])[:, None], np.arange(self.pixels.shape[1]), np.random.randint(self.pixelNoises.shape[2], size=self.pixels.shape)]
-	def setRandomPixelNoises(self, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
-		self.pixelNoises = fixed_cMosGrid.getRandomPixelNoises(self.pixels.size, noisePictureFilePath, imageStart, imageSizes)    \
-								.reshape((*self.pixels.shape[0:2], -1))
-	@staticmethod
-	def getRandomPixelNoises(nOfPixels, path, imageStart = (0,0), imageSizes = None):
-		images = cMosGrid.getPictures(path, imageStart, imageSizes)
-		pixels = images.reshape((images.shape[0], -1)).T
-		return pixels
-	
+    '''
+    same as fixed_cMosGrid, but you can specify the size of the images. In that case,
+    only a subsection of the real images will be used. Of course, the size has to be
+    the same or smaller than the original image sizes
+    '''
+    def init(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart = None, magnification = 1):
+        '''
+        if imageStart is not specified, the taken subimages will be centered on the real images (as if you wrote imageStart=realImageSize // 2 - imageSize // 2)
+        '''
+        firstImage = cMosGrid.getPictures(noisePictureFilePath, pictureLimit=1 )
+        realImageSize = np.array(firstImage.shape[1:])
+        finalImageSize = np.array((nofXpixels, nofYpixels))
+        if imageStart is None:
+            imageStart = realImageSize // 2 - finalImageSize // 2
+        super().init(xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, imageStart, (nofXpixels, nofYpixels), magnification = magnification)
+
+        def addNoise(self):
+            self.pixels += self.pixelNoises[np.arange(self.pixels.shape[0])[:, None], np.arange(self.pixels.shape[1]), np.random.randint(self.pixelNoises.shape[2], size=self.pixels.shape)]
+        def setRandomPixelNoises(self, noisePictureFilePath, imageStart = (0,0), imageSizes = None):
+            self.pixelNoises = fixed_cMosGrid.getRandomPixelNoises(self.pixels.size, noisePictureFilePath, imageStart, imageSizes)    \
+							.reshape((*self.pixels.shape[0:2], -1))
+        @staticmethod
+        def getRandomPixelNoises(nOfPixels, path, imageStart = (0,0), imageSizes = None):
+        	images = cMosGrid.getPictures(path, imageStart, imageSizes)
+        	pixels = images.reshape((images.shape[0], -1)).T
+        	return pixels
+        
+        
+        
 class strayLight_cMosGrid(refreshing_cMosGrid):
 	def __init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, noisePictureFilePath, avoidanceRoi = 5, tweezerMinPixelDistance = 10, atomPeakMinValue = 1, magnification = 1):
 		pixelGrid.__init__(self, xsize, ysize, nofXpixels, nofYpixels, PSF, magnification)
@@ -707,7 +736,7 @@ class Camera:
 	def hitLens(self, photonStartPoints, photonDirections, returnHitIndexes = False):
 		return self.hitsSpecifiedLens(photonStartPoints, photonDirections, self.position, self.orientation, self.radius, returnHitIndexes, self.focusDistance)	
 
-	def takePicture(self, photonStartPoints, photonDirections, plot = False, saveToFile : str = None, **additionalAttributesToSave):
+	def takePicture(self, photonStartPoints, photonDirections, plot = False, saveToFile : str = None ,scatterPlot = False, atomPositions = None, **additionalAttributesToSave):
 		initialNOfPhotons = len(photonDirections)
 		hittingPositions = self.hitLens(photonStartPoints, photonDirections)
 		nOfPhotonHittingLens = len(hittingPositions)
@@ -721,13 +750,80 @@ class Camera:
 		
 		image = self.pixelGrids[-1].pixels
 		if plot:
-			plt.figure(figsize=(14, 12))  # Ensure the plot is always square
-			plt.imshow(image.T, origin='lower', cmap = 'Purples', aspect='auto')
-			plt.colorbar(label='Intensity')
-			plt.xlabel('x')
-			plt.ylabel('y')
-			plt.title('2D Function Plot')
+			plt.figure(figsize=(8, 4))  # Ensure the plot is always square
+			plt.imshow(image, origin='lower', aspect='equal',cmap = 'Reds')#cmap = 'bone_r',vmax= 25)
+			plt.colorbar(label='Intensity',orientation='horizontal', pad=0.18)
+			plt.xlabel(r'$x\;(px)$',fontsize = 15)
+			plt.ylabel(r'$y\;(px)$',fontsize = 15)
+			plt.title('Camera Image',fontsize = 20)
+			plt.tight_layout()
 			plt.show()
+        
+		if scatterPlot and atomPositions is not None:
+
+			plt.figure(figsize=(8, 4))
+			plt.scatter(-atomPositions[:, 0]+image.shape[1]/2,atomPositions[:, 1]+image.shape[0]/2,s=30,alpha=0.7,edgecolors='k', linewidths=0.4,  c='tab:red')
+			plt.xlabel(r'$x\;(px)$', fontsize=12)
+			plt.ylabel(r'$x\;(px)$', fontsize=12)
+			plt.title('Atom Positions', fontsize=15)
+			plt.xlim(0,image.shape[1])
+			plt.ylim(0,image.shape[0])
+			plt.gca().set_aspect('equal', adjustable='box')  # ensures 1:1 x:y ratio
+			plt.grid(True, linestyle='--', alpha=0.4)  # dashed, semi-transparent
+
+			plt.tight_layout()
+            
+			plt.show()
+            
+
+			fig = plt.figure(figsize=(6, 3))
+            
+			plt.text(
+                0.5, 0.5,
+                rf'$N_{{at}} = {additionalAttributesToSave["atomNumber"]}$, '
+                rf'$M = {additionalAttributesToSave["magnification"]}$, '
+                rf'$k = {additionalAttributesToSave["ellipticity"]}$'
+                
+                '\n'
+                rf'$\omega_x = 2\pi\cdot{np.round(additionalAttributesToSave["ODT_trapFreqX"]/2/np.pi/1e3,1)}$ $kHz$, '
+                rf'$\omega_y = 2\pi\cdot{np.round(additionalAttributesToSave["ODT_trapFreqY"]/2/np.pi/1e3,1)}$ $kHz$, '
+                rf'$\omega_z = 2\pi\cdot{np.round(additionalAttributesToSave["ODT_trapFreqZ"]/2/np.pi/1e3,1)}$ $kHz$'
+                '\n'
+                rf'$r_p^m = {np.round(additionalAttributesToSave["minMeanPlanarInterparticleSpacing"]*1e6,3)}\ \mu m$, '
+                rf'$T_0 = {additionalAttributesToSave["initialT"]*1e6}\ \mu K$, '
+                rf'$k_F^{{-1}} = {np.round(additionalAttributesToSave["inverseFermiWV"]*1e6,3)}\ \mu m$, '
+                rf'$T_F = {np.round(additionalAttributesToSave["fermiTemperature"]*1e6,3)}\ \mu K$',
+                ha='center',
+                va='center',
+                fontsize=12,
+                transform=fig.transFigure,
+                bbox=dict(
+                    boxstyle='round',
+                    facecolor='white',
+                    edgecolor='black',
+                    alpha=0.9
+                )
+            )
+
+			plt.axis('off')
+			plt.show()
+
+
+            
+            
+            
+		if saveToFile is not None:
+			additionalAttributesToSave['initial number of photons'] = initialNOfPhotons
+			additionalAttributesToSave['number of photons hitting lens'] = nOfPhotonHittingLens
+			for i in range(len(self.pixelGrids)):
+				additionalAttributesToSave[f'number of photons hitting grid {i}'] = nOfPhotonsHittingGrid[i]
+				for key, val in extraGridInfos[i].items():
+					additionalAttributesToSave[f'grid {i}, {key}'] = val
+
+			save_h5_image(saveToFile, image, **additionalAttributesToSave)
+		return image
+    
+    
 		if saveToFile is not None:
 			additionalAttributesToSave['initial number of photons'] = initialNOfPhotons
 			additionalAttributesToSave['number of photons hitting lens'] = nOfPhotonHittingLens
@@ -821,38 +917,6 @@ class randExtractor:
 			  		f[x_i	,	y_i+1]	* (1-x_p)	* (y_p)		+ \
 					f[x_i+1	,	y_i+1]	* (x_p)		* (y_p)
 		return np.array([np.interp(valuesToInterpolate[:,2][j], averageZ[j], averageF[j]) for j in range(len(averageZ))])
-	# @staticmethod
-	# def interpolateND_semigrid(grids, lastAxisValues, f, valuesToInterpolate):
-	# 	'''
-	# 	grids: (n0-array, n1-array, ...)
-	# 	lastAxisValues: n0*n1*...*p-array
-	# 	f: n0*n1*...*p-array, f[i][j]...[k] = f(grids[0][i], grids[1][j], ..., z[i][j]...[k])
-	# 	valuesToInterpolate: q*(len(grids)+1) array
-	# 	'''
-	# 	D = len(grids)
-	# 	x_i = np.zeros((D, len(valuesToInterpolate)))
-	# 	x_p = np.zeros_like(x_i)
-	# 	for i in range(D):
-	# 		x_i[i, :, 0], x_p[i] = getIndexesAndFractionalPosition(valuesToInterpolate[:, i], grids[i])
-
-	# 	x_p, y_p = x_p[...,None], y_p[...,None]
-		
-	# 	combinations = np.array(np.meshgrid(*([[0, 1]]*D), indexing='ij')).reshape(D, -1).T
-	# 	averageZ = np.zeros((len(valuesToInterpolate)))
-	# 	averageF = 
-
-	# 	for i in range(len(combinations)):
-	# 		aver
-
-	# 	averageZ =	z[x_i	,	y_i]	* (1-x_p)	* (1-y_p)	+ \
-	# 		  		z[x_i+1	,	y_i]	* (x_p)		* (1-y_p)	+ \
-	# 		  		z[x_i	,	y_i+1]	* (1-x_p)	* (y_p)		+ \
-	# 				z[x_i+1	,	y_i+1]	* (x_p)		* (y_p)
-	# 	averageF =	f[x_i	,	y_i]	* (1-x_p)	* (1-y_p)	+ \
-	# 		  		f[x_i+1	,	y_i]	* (x_p)		* (1-y_p)	+ \
-	# 		  		f[x_i	,	y_i+1]	* (1-x_p)	* (y_p)		+ \
-	# 				f[x_i+1	,	y_i+1]	* (x_p)		* (y_p)
-	# 	return np.array([np.interp(valuesToInterpolate[:,2][j], averageZ[j], averageF[j]) for j in range(len(averageZ))])
 
 
 	@staticmethod
@@ -1032,7 +1096,9 @@ class randExtractor:
 		cdf_values_y /= cdf_values_y[:,-1,:][:,None,:]
 
 		cdf_values_y = np.swapaxes(cdf_values_y, 1, 2)
+		meshed_grids = list(meshed_grids)
 		meshed_grids[1] = np.swapaxes(meshed_grids[1], 1, 2)
+		meshed_grids = tuple(meshed_grids)
 
 		def get_x_y(offsets, t):
 			rand = np.random.random(np.shape(offsets))
@@ -1056,7 +1122,7 @@ class experimentViewer:
 			f.create_dataset("lastPositons", data = self.lastPositons)
 			f.create_dataset("lastHits", data = np.array(self.lastHits))
 			f.create_dataset("lastGeneratedPhotons", data = self.lastGeneratedPhotons)
-			f.create_dataset("lastTimings", data = self.lastTimings)
+			f.create_dataset("lastTimings", data = self.lastTimings) 
 			if hasattr(self, "tweezerPositions"):
 				f.create_dataset("tweezerPositions", data = self.tweezerPositions)
 			f.attrs.update(metadata)
@@ -1098,7 +1164,7 @@ class experimentViewer:
 	def positionsAtTime(self, time):
 		positions = np.zeros(self.lastPositons.shape[1:])
 		for atom_idx in range(len(positions)):
-			timeIndex = np.searchsorted(self.lastTimings[:,atom_idx], time)
+			timeIndex = np.searchsorted(self.lastTimings[:,atom_idx], time) -1
 			positions[atom_idx] = self.lastPositons[timeIndex, atom_idx]
 		return positions
 	def plotTrajectoriesAndCameraAcquisition(self, camera : Camera):
@@ -1107,38 +1173,38 @@ class experimentViewer:
 		hitCamera[hitIdx] = True
 		fig = plt.figure()
 		ax = fig.add_subplot(111, projection='3d')
-		min_bounds = np.min(self.lastPositons, axis=(0, 1))
-		max_bounds = np.max(self.lastPositons, axis=(0, 1))
+		min_bounds = np.nanmin(self.lastPositons, axis=(0, 1))
+		max_bounds = np.nanmax(self.lastPositons, axis=(0, 1))
 		maxRange = np.max(max_bounds - min_bounds)
 		baseQuiverLength = maxRange / 20
 		min_bounds = (max_bounds + min_bounds) / 2 - maxRange / 2
 		max_bounds = min_bounds + maxRange
 		for atom_idx in range(self.lastPositons.shape[1]):
-			ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
-			ax.scatter(self.lastPositons[0, atom_idx, 0], self.lastPositons[0, atom_idx, 1], self.lastPositons[0, atom_idx, 2])
+			ax.plot(self.lastPositons[:, atom_idx, 0]*1e6, self.lastPositons[:, atom_idx, 1]*1e6, self.lastPositons[:, atom_idx, 2]*1e6, label=f'Atom {atom_idx+1}')
+			ax.scatter(self.lastPositons[0, atom_idx, 0]*1e6, self.lastPositons[0, atom_idx, 1]*1e6, self.lastPositons[0, atom_idx, 2]*1e6)
 		if self.hasHits:
 			for laser_idx in range(np.max(self.lastHits[2])+1):
 				laserHits = np.where(self.lastHits[2] == laser_idx)[0]
 				if len(laserHits) > 0:
 					time_idx = self.lastHits[0][laserHits]
 					atom_idx = self.lastHits[1][laserHits]
-					ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
+					ax.scatter(self.lastPositons[time_idx, atom_idx, 0]*1e6, self.lastPositons[time_idx, atom_idx, 1]*1e6, self.lastPositons[time_idx, atom_idx, 2]*1e6, 
 							label=f'laser {laser_idx+1} hits', s=5)
 					for h in range(len(laserHits)):
 						position = self.lastPositons[time_idx[h], atom_idx[h]]
 						directions = self.lastGeneratedPhotons[laserHits[h]] * baseQuiverLength
 						isAHit = hitCamera[laserHits[h]]
 						if isAHit:
-							ax.quiver(position[0], position[1], position[2], 
-										directions[0], directions[1], directions[2], color='red')
+							ax.quiver(position[0]*1e6, position[1]*1e6, position[2]*1e6, 
+										directions[0]*1e6, directions[1]*1e6, directions[2]*1e6, color='red')
 							# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx, 0])
 				
-		ax.set_xlabel('X Position (m)')
-		ax.set_ylabel('Y Position (m)')
-		ax.set_zlabel('Z Position (m)')
-		ax.set_xlim(min_bounds[0], max_bounds[0])
-		ax.set_ylim(min_bounds[1], max_bounds[1])
-		ax.set_zlim(min_bounds[2], max_bounds[2])
+		ax.set_xlabel(r'X Position ($\mu$m)')
+		ax.set_ylabel(r'Y Position ($\mu$m)')
+		ax.set_zlabel(r'Z Position ($\mu$m)')
+		ax.set_xlim(min_bounds[0]*1e6, max_bounds[0]*1e6)
+		ax.set_ylim(min_bounds[1]*1e6, max_bounds[1]*1e6)
+		ax.set_zlim(min_bounds[2]*1e6, max_bounds[2]*1e6)
 		ax.set_title('3D Trajectories of Atoms')
 		ax.legend()
 		plt.show()
@@ -1155,17 +1221,17 @@ class experimentViewer:
 		min_bounds = (max_bounds + min_bounds) / 2 - maxRange / 2
 		max_bounds = min_bounds + maxRange
 		for atom_idx in range(self.lastPositons.shape[1]):
-			ax.plot(self.lastPositons[:, atom_idx, 0], self.lastPositons[:, atom_idx, 1], self.lastPositons[:, atom_idx, 2], label=f'Atom {atom_idx+1}')
-			ax.scatter(*self.lastPositons[0, atom_idx, :], s=20)
+			ax.plot(self.lastPositons[:, atom_idx, 0]*1e6, self.lastPositons[:, atom_idx, 1]*1e6, self.lastPositons[:, atom_idx, 2]*1e6, label=f'Atom {atom_idx+1}')
+			ax.scatter(*self.lastPositons[0, atom_idx, :]*1e6, s=20)
 			if hasattr (self, "tweezerPositions"):
-				ax.scatter(*self.tweezerPositions[atom_idx], s=30, color=plt.gca().lines[-1].get_color())
+				ax.scatter(*self.tweezerPositions[atom_idx]*1e6, s=30, color=plt.gca().lines[-1].get_color())
 		if self.hasHits:
 			for laser_idx in range(np.max(self.lastHits[2])+1):
 				laserHits = np.where(self.lastHits[2] == laser_idx)[0]
 				if len(laserHits) > 0:
 					time_idx = self.lastHits[0][laserHits]
 					atom_idx = self.lastHits[1][laserHits]
-					ax.scatter(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastPositons[time_idx, atom_idx, 2], 
+					ax.scatter(self.lastPositons[time_idx, atom_idx, 0]*1e6, self.lastPositons[time_idx, atom_idx, 1]*1e6, self.lastPositons[time_idx, atom_idx, 2]*1e6, 
 							label=f'laser {laser_idx+1} hits', s=5)
 					# for h in range(len(laserHits)):
 					# 	position = self.lastPositons[time_idx[h], atom_idx[h]]
@@ -1174,12 +1240,12 @@ class experimentViewer:
 					# 			directions[0], directions[1], directions[2], color='red')
 		# 			# ax.quiver(self.lastPositons[time_idx, atom_idx, 0], self.lastPositons[time_idx, atom_idx, 1], self.lastGeneratedPhotons[time_idx, atom_idx])
 
-		ax.set_xlabel('X Position (m)')
-		ax.set_ylabel('Y Position (m)')
-		ax.set_zlabel('Z Position (m)')
-		ax.set_xlim(min_bounds[0], max_bounds[0])
-		ax.set_ylim(min_bounds[1], max_bounds[1])
-		ax.set_zlim(min_bounds[2], max_bounds[2])
+		ax.set_xlabel('X Position ($\mu$m)')
+		ax.set_ylabel('Y Position ($\mu$m)')
+		ax.set_zlabel('Z Position ($\mu$m)')
+		ax.set_xlim(min_bounds[0]*1e6, max_bounds[0]*1e6)
+		ax.set_ylim(min_bounds[1]*1e6, max_bounds[1]*1e6)
+		ax.set_zlim(min_bounds[2]*1e6, max_bounds[2]*1e6)
 		ax.set_title('3D Trajectories of Atoms')
 		ax.legend()
 		plt.show()
@@ -1505,68 +1571,20 @@ if __name__ == '__main__':
 	
 	# plt.legend()
 	# plt.show()
-	# files = [f"D:/simulationImages/magnified_Yt171_20us_10tweezerArray/simulation/simulation_{i}.h5" for i in range(0, 1)]
-	# exp = experimentViewer()
-	# for file in files:
-	# 	metadata = exp.loadAcquisition(file)
-	# 	for i in range(exp.lastPositons.shape[1]):
-	# 		with h5py.File(file.replace(".h5",f"atom{i}.h5"), 'w') as f:
-	# 			data = exp.lastPositons[:, i, :]
-	# 			data = data[np.logical_not(np.isnan(data).any(axis=1))]
-	# 			center = metadata["tweezer_centers"][i]
-	# 			data -= center[None,:]
+	files = [f"D:/simulationImages/magnified_Yt171_20us_10tweezerArray/simulation/simulation_{i}.h5" for i in range(0, 1)]
+	exp = experimentViewer()
+	for file in files:
+		metadata = exp.loadAcquisition(file)
+		for i in range(exp.lastPositons.shape[1]):
+			with h5py.File(file.replace(".h5",f"atom{i}.h5"), 'w') as f:
+				data = exp.lastPositons[:, i, :]
+				data = data[np.logical_not(np.isnan(data).any(axis=1))]
+				center = metadata["tweezer_centers"][i]
+				data -= center[None,:]
 				
-	# 			plt.plot(
-	# 				data[:, 2], label=f'Atom {i+1}')
-	# 			f.create_dataset("positions", data=exp.lastPositons[:, i, :])
-	# 			f.close()
-	# 	plt.show()
-	# def testPDF(nx, ny, nz):
-	# 	return np.exp(-nx) * np.exp(-ny) * np.exp(-nz*.5)
-	# G = randExtractor.distribFunFromPDF_3D(lambda x,y,z: testPDF(x,y,z), [[0,4]]*3, [5e-2]*3)
-
-	def testPDF(x,y,z):
-		# if x>2:
-		# 	return 1 if y<1 else 0.1
-		# if x>1:
-		# 	return .5 if z>1 else 0.1
-		# return .25	
-		result = np.zeros_like(x)
-		result[np.logical_and(x>2,y<1)] = 1
-		result[np.logical_and(x>2,y>=1)] = 0.1
-		result[np.logical_and(x>1,np.logical_and(x<=2,z>1))] = 0.5
-		result[np.logical_and(x>1,np.logical_and(x<=2,z<=1))] = 0.1
-		result[x<=1] = .25
-		return result
-	G = randExtractor.distribFunFromPDF_3D(lambda x,y,z: testPDF(x,y,z), [[0,3],[0,2],[0,2]], [5e-2]*3)
-	
-	# def testPDF(nx, ny, nz):
-	# 	return np.exp(-(nx**2+ny**2+.05*nz**2))	
-	# G = randExtractor.distribFunFromPDF_3D(lambda x,y,z: testPDF(x,y,z), [[-5,5]]*3, [5e-2]*3)
-
-	extractedPoints = np.zeros((10000,3))
-	extractedPoints = G(extractedPoints)
-
-	# Then add this for 3D scatter plot:
-	fig = plt.figure(figsize=(10, 8))
-	ax = fig.add_subplot(111, projection='3d')
-	ax.scatter(extractedPoints[:, 0], extractedPoints[:, 1], extractedPoints[:, 2], alpha=0.1)
-	ax.set_xlabel('X')
-	ax.set_ylabel('Y')
-	ax.set_zlabel('Z')
-	ax.set_title('3D Distribution')
-	plt.show()
-	# for i in range(len(extractedPoints[0])):
-	# 	# extractedPoints[:,i] = G(np.zeros((2,1)))
-
-	plt.scatter(extractedPoints[:,0], extractedPoints[:,1],alpha=.1)
-	plt.show()
-	plt.scatter(extractedPoints[:,0], extractedPoints[:,2],alpha=.1)
-	plt.show()
-	plt.scatter(extractedPoints[:,1], extractedPoints[:,2],alpha=.1)
-	plt.show()
-	# extractedPoints = np.zeros((10000,3))
-	# extractedPoints = G(extractedPoints)
-	# plt.scatter(extractedPoints[:,1], extractedPoints[:,2],alpha=.1)
-	# plt.show()
-	pass
+				plt.plot(
+					data[:, 2], label=f'Atom {i+1}')
+				f.create_dataset("positions", data=exp.lastPositons[:, i, :])
+				f.close()
+		plt.show()
+pass

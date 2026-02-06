@@ -48,7 +48,7 @@ muB = 1.399*10 ** 6;                # Bohr's magneton [Hz/G]
 nm = 10**-9
 MHz = 10**6
 kHz = 10**3
-
+mW = 10**-3
 # Initialise ytterbium atoms 
 Yb_171 = yblib.Yb(171,170.936323,1/2)
 Yb_173 = yblib.Yb(173,172.938208,5/2)
